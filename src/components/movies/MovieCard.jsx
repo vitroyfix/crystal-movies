@@ -1,24 +1,27 @@
-import { Star } from 'lucide-react';
+import { Star } from "lucide-react";
+import { Link } from "react-router-dom";
 
-const MovieCard = ({ poster, title, rating, year }) => {
+const MovieCard = ({ id, poster, title, rating, year }) => {
   const stars = Math.round(rating);
 
   return (
-    <div>
+    <Link to={`/movie/${id}`} style={{ textDecoration: "none", color: "inherit" }}>
       <div>
-        <img src={poster} alt={`${title}`} />
+        <div>
+          <img src={poster} alt={title} />
+        </div>
+        <div>
+          <h1>{title}</h1>
+        </div>
+        <div>
+          <Star size={15} />
+          <p>{stars}/10</p>
+        </div>
+        <div>
+          <p>{year}</p>
+        </div>
       </div>
-      <div>
-        <h1>{title}</h1>
-      </div>
-      <div>
-        <Star size={15}/>
-        <p>{stars}/5</p>
-      </div>
-      <div>
-        <p>{year}</p>
-      </div>
-    </div>
+    </Link>
   );
 };
 
