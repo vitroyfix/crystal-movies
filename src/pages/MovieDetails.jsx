@@ -1,12 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { fetchMovieDetails } from "../services/api";
-import { Star } from 'lucide-react';
+import { Star } from "lucide-react";
+import useTrailer from "../hooks/useTrailer";
+
+const DetailItem = ({ label, value }) => {
+  if (!value || value === "N/A") return null;
+  return (
+    <p>
+      <strong>{label}:</strong> {value}
+    </p>
+  );
+};
 
 const MovieDetails = () => {
   const { id } = useParams();
   const [movie, setMovie] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Trailer hook usage
+  const { trailerUrl, isPlaying, playTrailer, stopTrailer } = useTrailer(id);
 
   useEffect(() => {
     async function loadMovie() {
@@ -23,31 +36,51 @@ const MovieDetails = () => {
   const { poster, title, badgeYear, rating, runtime, votes, plot } = movie;
   const star = Math.round(rating);
 
- const movieDetails = {
-  Director: movie.director,
-  Cast: movie.cast,
-  Language: movie.language,
-  Writer: movie.writer,
-  Genre: movie.genre,
-};
-
-
   return (
-    <div>
-      <div>
-      <img src={poster} alt={title} />
-      <h1>{title}</h1>
-      <p>{badgeYear}</p>
-      <p>{runtime}</p>
-      <p>{votes} votes</p>
-      <p>{plot}</p>
-      <p><Star size="15px"/>{star}/10</p>
+    <div className="movie-details">
+      <div className="movie-header">
+        <img src={poster} alt={title} />
+        <div className="movie-info">
+          <h1>{title}</h1>
+          <p>{badgeYear}</p>
+          <p>{runtime}</p>
+          <p>{votes} votes</p>
+          <p>{plot}</p>
+          <p>
+            <Star size="15px" /> {star}/10
+          </p>
+
+          {/* Trailer buttons */}
+          <div className="trailer-buttons">
+            {!isPlaying && <button onClick={playTrailer}>Watch Trailer</button>}
+            {isPlaying && <button onClick={stopTrailer}>Stop Trailer</button>}
+          </div>
+        </div>
       </div>
-       <div>
-        {Object.entries(movieDetails).map(([key, value]) => (
-        <p key={key}><strong>{key}:</strong> {value}</p>
-        ))}
-     </div>
+
+      {/* Show trailer inline if playing */}
+      {isPlaying && trailerUrl && (
+        <div className="trailer-container">
+          <iframe
+            width="100%"
+            height="400"
+            src={trailerUrl}
+            title={`${title} Trailer`}
+            frameBorder="0"
+            allow="autoplay; encrypted-media"
+            allowFullScreen
+          />
+        </div>
+      )}
+
+      {/* Additional details */}
+      <div className="movie-extra-details">
+        <DetailItem label="Director" value={movie.director} />
+        <DetailItem label="Cast" value={movie.cast} />
+        <DetailItem label="Language" value={movie.language} />
+        <DetailItem label="Writer" value={movie.writer} />
+        <DetailItem label="Genre" value={movie.genre} />
+      </div>
     </div>
   );
 };

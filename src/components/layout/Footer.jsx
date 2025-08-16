@@ -59,9 +59,10 @@ const Footer = () => {
 
       <div className="footer-bottom">
         <p>
-          &copy; 2025 Crystal Movies. All rights reserved. Built with passion for
+          &copy; {new Date().getFullYear()} Crystal Movies. All rights reserved. Built with passion for
           cinema lovers.
         </p>
+
       </div>
     </footer>
   );
