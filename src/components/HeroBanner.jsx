@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useHeroBanner } from "../hooks/useHeroBanner";
-import { Music, Speaker, Undo} from "lucide-react";
+import { Volume2, VolumeX, Undo } from "lucide-react";
 
 const HeroBanner = () => {
   const { movie, videoIds, trailerKey } = useHeroBanner();
@@ -16,7 +16,7 @@ const HeroBanner = () => {
         <iframe
           src={`https://www.youtube.com/embed/${videoIds[0]}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${videoIds.join(
             ","
-          )}&controls=0&modestbranding=1&showinfo=0`}
+          )}&controls=0&modestbranding=1&showinfo=0&rel=0`}
           style={{
             position: "absolute",
             top: 0,
@@ -32,7 +32,7 @@ const HeroBanner = () => {
         />
       ) : (
         <img
-          src={movie.backdrop}
+          src={movie.poster}
           alt={movie.title}
           style={{
             position: "absolute",
@@ -46,10 +46,35 @@ const HeroBanner = () => {
         />
       )}
 
-      <div style={{ padding: "2rem", color: "white", maxWidth: "600px" }}>
-        <h1 style={{ fontSize: "3rem", marginBottom: "1rem" }}>{movie.title}</h1>
-        <p style={{ fontSize: "1.2rem", marginBottom: "1.5rem" }}>{movie.overview}</p>
+      {/* Gradient overlay */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          background: "linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0))",
+          zIndex: 0,
+        }}
+      />
 
+      {/* Content */}
+      <div
+        style={{
+          position: "relative",
+          padding: "2rem",
+          color: "white",
+          maxWidth: "600px",
+          zIndex: 1,
+        }}
+      >
+        <h1 style={{ fontSize: "3rem", marginBottom: "1rem" }}>{movie.title}</h1>
+
+        {/* Full plot description */}
+        <p style={{ fontSize: "1.2rem", marginBottom: "1.5rem" }}>{movie.plot}</p>
+
+        {/* Trailer button */}
         {trailerKey && (
           <button
             onClick={() => setShowTrailer(true)}
@@ -68,6 +93,7 @@ const HeroBanner = () => {
           </button>
         )}
 
+        {/* Mute/unmute button */}
         {videoIds.length > 0 && (
           <button
             onClick={() => setMuted(!muted)}
@@ -84,12 +110,13 @@ const HeroBanner = () => {
               gap: "5px",
             }}
           >
-            {muted ? <Speaker size={16} /> : <Music size={16} />}
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             {muted ? "Unmute" : "Mute"}
           </button>
         )}
       </div>
 
+      {/* Trailer modal */}
       {showTrailer && (
         <div
           style={{
@@ -119,7 +146,7 @@ const HeroBanner = () => {
                 cursor: "pointer",
               }}
             >
-            <Undo/>
+              <Undo />
             </button>
             <iframe
               width="100%"

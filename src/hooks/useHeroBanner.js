@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { fetchTrendingMovies } from "../services/api";
+import { fetchTrendingMovies, fetchMovieDetails } from "../services/api";
 
-const YT_API_KEY = "AIzaSyDF-XoNkTPCQ-ZdwMeBDEQ6rY-d5LBKfms"; 
+const YT_API_KEY = "AIzaSyBNtX7z0Dpf6rYxBWIrtrMDadIdWFfoXAw"; 
 export function useHeroBanner() {
   const [movie, setMovie] = useState(null);
   const [videoIds, setVideoIds] = useState([]);
@@ -10,11 +10,13 @@ export function useHeroBanner() {
   useEffect(() => {
     async function getMovieAndClips() {
       try {
+      
         const trending = await fetchTrendingMovies();
         if (!trending || trending.length === 0) return;
-
         const firstMovie = trending[0];
-        setMovie(firstMovie);
+
+        const fullDetails = await fetchMovieDetails(firstMovie.id);
+        setMovie(fullDetails);
 
         const searchTerms = [
           firstMovie.title + " official trailer",

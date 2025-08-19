@@ -1,8 +1,24 @@
 import React from 'react'
-import ComingSoon from './ComingSoon.jsx'
-const Profile = () => {
+import { User } from 'lucide-react';
+const Profile = ({name, email}) => {
   return (
-  <ComingSoon/>
+      <section>
+        <div>
+          <User/>
+        </div>
+        <div>
+          {name}
+        </div>
+        <div>
+          {email}
+        </div>
+        <div>
+          <ul>
+            <li>Favourites</li>
+            <li>My list</li>
+          </ul>
+        </div>
+      </section>
   )
 }
 

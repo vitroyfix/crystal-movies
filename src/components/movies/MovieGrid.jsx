@@ -1,10 +1,22 @@
 import React, { useState, useEffect } from "react";
 import MovieCard from "./MovieCard.jsx";
-import { fetchMovies } from "../../services/api.js"; 
+import {
+  fetchTrendingMovies,
+  fetchTopRatedMovies,
+  fetchRecentlyAddedMovies,
+} from "../../services/api.js";
 
 const MovieGrid = () => {
-  const buttons = ["Action", "Romance", "Comedy", "Horror", "Adventure", "Sci-fi", "Drama", "Thriller"];
-
+  const buttons = [
+    "Action",
+    "Romance",
+    "Comedy",
+    "Horror",
+    "Adventure",
+    "Sci-fi",
+    "Drama",
+    "Thriller",
+  ];
 
   const [trending, setTrending] = useState([]);
   const [topRated, setTopRated] = useState([]);
@@ -13,9 +25,12 @@ const MovieGrid = () => {
 
   useEffect(() => {
     async function loadMovies() {
-      const trendingData = await fetchMovies(); 
-      const topRatedData = await fetchMovies(); 
-      const recentlyAddedData = await fetchMovies(); 
+      const [trendingData, topRatedData, recentlyAddedData] =
+        await Promise.all([
+          fetchTrendingMovies(),
+          fetchTopRatedMovies(),
+          fetchRecentlyAddedMovies(),
+        ]);
 
       setTrending(trendingData);
       setTopRated(topRatedData);
@@ -33,15 +48,8 @@ const MovieGrid = () => {
       <div>
         <h2>Trending Now</h2>
         <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-          {trending.map(movie => (
-            <MovieCard
-              key={movie.id}
-              id={movie.id}
-              poster={movie.poster}
-              title={movie.title}
-              rating={movie.rating}
-              year={movie.year}
-            />
+          {trending.map((movie) => (
+            <MovieCard key={movie.id} {...movie} />
           ))}
         </div>
       </div>
@@ -49,15 +57,8 @@ const MovieGrid = () => {
       <div>
         <h2>Top Rated Movies</h2>
         <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-          {topRated.map(movie => (
-            <MovieCard
-              key={movie.id}
-              id={movie.id}
-              poster={movie.poster}
-              title={movie.title}
-              rating={movie.rating}
-              year={movie.year}
-            />
+          {topRated.map((movie) => (
+            <MovieCard key={movie.id} {...movie} />
           ))}
         </div>
       </div>
@@ -75,15 +76,8 @@ const MovieGrid = () => {
       <div>
         <h2>Recently Added</h2>
         <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
-          {recentlyAdded.map(movie => (
-            <MovieCard
-              key={movie.id}
-              id={movie.id}
-              poster={movie.poster}
-              title={movie.title}
-              rating={movie.rating}
-              year={movie.year}
-            />
+          {recentlyAdded.map((movie) => (
+            <MovieCard key={movie.id} {...movie} />
           ))}
         </div>
       </div>
