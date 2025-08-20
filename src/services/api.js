@@ -1,6 +1,6 @@
-const API_KEY = "7950b183ab0b26dfd1bc509617009940";
-const BASE_URL = "https://api.themoviedb.org/3";
-const OMDB_API_KEY = "ea2021d";
+const API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+const BASE_URL = import.meta.env.VITE_BASE_URL;
+const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
 
 const languageMap = {
   en: "English",
@@ -152,7 +152,7 @@ export async function fetchMovieDetails(id) {
       title: details.title,
       badgeYear: details.release_date?.split("-")[0],
       rating: details.vote_average,
-      runtime: `${details.runtime} min`,
+      runtime: `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m`,
       votes: details.vote_count,
       plot,
       director,

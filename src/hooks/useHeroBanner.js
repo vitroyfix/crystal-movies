@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { fetchTrendingMovies, fetchMovieDetails } from "../services/api";
 
-const YT_API_KEY = "AIzaSyBNtX7z0Dpf6rYxBWIrtrMDadIdWFfoXAw"; 
+const YT_API_KEY = import.meta.env.VITE_YT_API_KEY;
 export function useHeroBanner() {
   const [movie, setMovie] = useState(null);
   const [videoIds, setVideoIds] = useState([]);

@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { fetchMovieDetails } from "../services/api";
 import { Star } from "lucide-react";
 import useTrailer from "../hooks/useTrailer";
+import '../styles/MovieDetails.css'
 
 const DetailItem = ({ label, value }) => {
   if (!value || value === "N/A") return null;
@@ -37,17 +38,20 @@ const MovieDetails = () => {
   const star = Math.round(rating);
 
   return (
-    <div className="movie-details">
+    <div className="movie-details" 
+     style={{ "--poster-url": `url(${poster})` }}>
       <div className="movie-header">
         <img src={poster} alt={title} />
         <div className="movie-info">
           <h1>{title}</h1>
-          <p>{badgeYear}</p>
-          <p>{runtime}</p>
-          <p>{votes} votes</p>
+        <div className="flex items-center space-x-4 text-sm text-gray-300 gap-6">
+            <p>{badgeYear}</p>
+             <p>{runtime}</p>
+            <p>{votes} votes</p>
+          </div>
           <p>{plot}</p>
-          <p>
-            <Star size="15px" /> {star}/10
+          <p className="flex items-center text-yellow-400">
+            <Star size="15px" className="text-yellow-400 mr-1" /> {star}/10 
           </p>
 
           {/* Trailer buttons */}

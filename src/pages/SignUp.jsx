@@ -1,66 +1,93 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React from "react";
+import { Link } from "react-router-dom";
 
 const SignUp = () => {
-
   return (
-    <div className="signup-container">
-      <form className="signup-form">
-        <div className="form-group">
-          <label htmlFor="username" className="form-label">Username</label>
+    <div
+      className="relative flex items-center justify-center min-h-screen bg-cover bg-center"
+      style={{
+        backgroundImage:
+          "url('https://i.pinimg.com/736x/ea/51/8e/ea518e4f31a27163d214012fd282a7b1.jpg')",
+      }}
+    >
+      
+      {/* Form container */}
+      <form className="relative z-10 bg-[rgba(0,0,0,0.2)] p-8 rounded-2xl shadow-lg w-full max-w-md">
+        <h2 className="text-2xl font-bold text-white text-center mb-6">
+          Create an Account
+        </h2>
+
+        {/* Username */}
+        <div className="mb-4">
+          <label htmlFor="username" className="block text-gray-300 mb-2">
+            Username
+          </label>
           <input
             type="text"
             id="username"
-            placeholder="Input username"
-            className="form-input"
+            placeholder="Enter username"
+            className="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
             required
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="email" className="form-label">Email address</label>
+        {/* Email */}
+        <div className="mb-4">
+          <label htmlFor="email" className="block text-gray-300 mb-2">
+            Email address
+          </label>
           <input
             type="email"
             id="email"
-            placeholder="Input email address"
-            className="form-input"
+            placeholder="Enter email address"
+            className="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
             required
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="password" className="form-label">Password</label>
+        {/* Password */}
+        <div className="mb-4">
+          <label htmlFor="password" className="block text-gray-300 mb-2">
+            Password
+          </label>
           <input
             type="password"
             id="password"
-            placeholder="•••••"
-            className="form-input"
+            placeholder="••••••••"
+            className="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
             required
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="confirm-password" className="form-label">Confirm Password</label>
+        {/* Confirm Password */}
+        <div className="mb-6">
+          <label htmlFor="confirm-password" className="block text-gray-300 mb-2">
+            Confirm Password
+          </label>
           <input
             type="password"
             id="confirm-password"
-            placeholder="•••••"
-            className="form-input"
+            placeholder="••••••••"
+            className="w-full px-4 py-2 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
             required
           />
         </div>
 
-        <div className="form-group">
-          <button type="submit" className="signup-button">
-            Create Account
-          </button>
-        </div>
+        {/* Button */}
+        <button
+          type="submit"
+          className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-300"
+        >
+          Create Account
+        </button>
 
-        <div className="signin-prompt">
-          <p>
-            Do you have an account? <Link to="/login" className="signin-link">Sign in</Link>
-          </p>
-        </div>
+        {/* Sign in link */}
+        <p className="text-white text-sm text-center mt-6">
+          Already have an account?{" "}
+          <Link to="/login" className="text-red-500 hover:underline">
+            Sign in
+          </Link>
+        </p>
       </form>
     </div>
   );
