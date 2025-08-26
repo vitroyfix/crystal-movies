@@ -1,38 +1,36 @@
-import { Star, Play } from "lucide-react";
+import { Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
-const MovieCard = ({ id, poster, title, rating, year }) => {
+const MovieCard = ({
+  id,
+  poster,
+  title,
+  rating = 0,
+  year,       
+  mediaType = "movie",
+}) => {
   const stars = Math.round(rating);
+  const route = `/movie/${id}/${mediaType}`;
 
   return (
-    <Link to={`/movie/${id}`} className="block group">
+    <Link to={route} className="block group">
       <div className="bg-gray-900 rounded-lg overflow-hidden shadow-md hover:scale-105 transform transition relative">
-        {/* Poster */}
         <div className="relative">
           <img
             src={poster}
             alt={title}
             className="w-full h-64 object-cover group-hover:opacity-90"
           />
-
-          {/* Play button overlay */}
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/50">
-            <Play size={36} className="text-white" />
-          </div>
         </div>
 
-        {/* Info */}
         <div className="p-3 text-white">
-          {/* Title */}
-          <h1 className="font-semibold text-base mb-1 truncate">{title}</h1>
-
-          {/* Rating + Year */}
+        <h1 className="font-semibold text-base mb-1 truncate">{title}</h1>
           <div className="flex items-center justify-between text-sm text-gray-300">
             <div className="flex items-center gap-1">
               <Star size={14} className="text-yellow-400" />
               <p>{stars}/10</p>
             </div>
-            <p className="text-gray-400">{year}</p>
+            <p className="text-gray-400">{year || "N/A"}</p>
           </div>
         </div>
       </div>

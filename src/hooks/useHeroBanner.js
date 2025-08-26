@@ -1,27 +1,29 @@
 import { useState, useEffect } from "react";
-import { fetchTrendingMovies, fetchMovieDetails } from "../services/api";
-
+import { fetchTrending, fetchMovieDetails } from "../services/api"; 
 const YT_API_KEY = import.meta.env.VITE_YT_API_KEY;
+
 export function useHeroBanner() {
-  const [movie, setMovie] = useState(null);
+  const [item, setItem] = useState(null);
   const [videoIds, setVideoIds] = useState([]);
   const [trailerKey, setTrailerKey] = useState(null);
 
   useEffect(() => {
-    async function getMovieAndClips() {
+    async function getItemAndClips() {
       try {
-      
-        const trending = await fetchTrendingMovies();
+        const trending = await fetchTrending();
         if (!trending || trending.length === 0) return;
-        const firstMovie = trending[0];
 
-        const fullDetails = await fetchMovieDetails(firstMovie.id);
-        setMovie(fullDetails);
+        const firstItem = trending[0]; 
+        const fullDetails = await fetchMovieDetails(firstItem.id, firstItem.mediaType);
+        setItem(fullDetails);
+
+        const title = fullDetails.title; 
+        const typeLabel = firstItem.mediaType === "tv" ? "TV show" : "movie";
 
         const searchTerms = [
-          firstMovie.title + " official trailer",
-          firstMovie.title + " movie clip",
-          firstMovie.title + " scene",
+          `${title} official trailer`,
+          `${title} ${typeLabel} clip`,
+          `${title} scene`,
         ];
 
         const ids = [];
@@ -42,8 +44,8 @@ export function useHeroBanner() {
       }
     }
 
-    getMovieAndClips();
+    getItemAndClips();
   }, []);
 
-  return { movie, videoIds, trailerKey };
+  return { item, videoIds, trailerKey };
 }
