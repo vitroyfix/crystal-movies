@@ -21,10 +21,15 @@ app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- THE FIX FOR "chrome.app" ERROR ---
+// --- THE ULTIMATE FIX FOR "MISSING MODULE" ERRORS ---
 const stealth = StealthPlugin();
-// We delete 'chrome.app' because it tries to access a file path that doesn't exist on Vercel
-stealth.enabledEvasions.delete('chrome.app'); 
+// 1. Reset everything to prevent it from looking for missing files
+stealth.enabledEvasions.clear();
+// 2. Only add back the safe ones that work in serverless environments
+stealth.enabledEvasions.add('user-agent-override');
+stealth.enabledEvasions.add('navigator.webdriver');
+stealth.enabledEvasions.add('navigator.plugins');
+stealth.enabledEvasions.add('media.codecs');
 puppeteer.use(stealth);
 
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
@@ -80,7 +85,6 @@ app.get('/api/scrape-stream', async (req, res) => {
 
         await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-        // Note: Using the duration from your vercel.json (60s)
         await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 35000 });
         await page.mouse.click(640, 360); 
 
