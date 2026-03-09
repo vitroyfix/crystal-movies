@@ -12,24 +12,26 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          // Move all node_modules into separate chunks to stay under 500kb
           if (id.includes('node_modules')) {
+            // Group heavy video processing (hls.js)
+            if (id.includes('hls.js')) {
+              return 'vendor-hls';
+            }
+            // Group Lucide icons separately
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
             }
-            if (id.includes('firebase')) {
-              return 'vendor-firebase';
+            // Group backend/DB logic
+            if (id.includes('@supabase') || id.includes('firebase')) {
+              return 'vendor-backend';
             }
-            if (id.includes('@supabase')) {
-              return 'vendor-supabase';
-            }
-            // All other third-party libraries (react, etc.)
+            // Everything else (react, react-dom, etc.)
             return 'vendor-core';
           }
         },
       },
     },
-    // Optional: Increases the threshold to 1000kb if you want to be less strict
+    // Increased to 1000kb to stay within comfortable limits
     chunkSizeWarningLimit: 1000,
   },
 })
