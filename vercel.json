@@ -2,16 +2,27 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/api/proxy/(.*)",
+      "source": "/api/:path*",
       "destination": "/api/index.js"
-    },
+    }
+  ],
+  "headers": [
     {
-      "source": "/api/proxy",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/api/scrape-stream",
-      "destination": "/api/index.js"
+      "source": "/api/:path*",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization, Range"
+        }
+      ]
     }
   ],
   "functions": {
