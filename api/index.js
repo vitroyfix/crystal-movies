@@ -82,10 +82,10 @@ app.get('/api/proxy', async (req, res) => {
                     const absoluteUrl = line.startsWith('http') ? line : new URL(line, providerBase).href;
                     line = `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
                 } else if (line.startsWith('#EXT-X-MEDIA')) {
-                    // Preserve #EXT-X-MEDIA but rewrite URI if present (for separate audio manifests)
-                    const uriMatch = line.match(/URI="([^"]+)"/);
+                    // Preserve #EXT-X-MEDIA but rewrite URI if present (for separate audio manifests), handling different quote styles
+                    const uriMatch = line.match(/URI\s*=\s*(["']?)([^"'\s]+)\1/);
                     if (uriMatch) {
-                        const uri = uriMatch[1];
+                        const uri = uriMatch[2];
                         const absoluteUri = uri.startsWith('http') ? uri : new URL(uri, providerBase).href;
                         line = line.replace(uriMatch[0], `URI="/api/proxy?url=${encodeURIComponent(absoluteUri)}"`);
                     }

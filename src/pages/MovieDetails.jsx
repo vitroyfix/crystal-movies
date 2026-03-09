@@ -32,6 +32,7 @@ const [error, setError] = useState(null);
 const [audioTracks, setAudioTracks] = useState([]);
 const [selectedAudio, setSelectedAudio] = useState('original'); // 'original' or 'english'
 const videoRef = useRef(null);
+const hlsRef = useRef(null);
 const progressInterval = useRef(null);
 // --- AUTH & WATCHLIST ---
 useEffect(() => {
@@ -182,21 +183,20 @@ setActiveStream(null);
       }
     }
   };
-// --- Function to select English audio track ---
-const selectEnglishAudio = (hlsInstance) => {
-  const tracks = hlsInstance.audioTracks;
-  if (tracks.length > 1) {
+// --- Function to select English audio track with fuzzy matching ---
+const selectEnglishAudio = (tracks) => {
+  if (tracks.length > 1 && hlsRef.current) {
     const englishIndex = tracks.findIndex(track => 
-      (track.lang && track.lang.toLowerCase() === 'en') || 
-      (track.name && track.name.toLowerCase().includes('english'))
+      (track.lang && track.lang.toLowerCase().includes('en')) || 
+      (track.name && track.name.toLowerCase().includes('en')) ||
+      (track.name && track.name.toLowerCase().includes('dub'))
     );
     if (englishIndex !== -1) {
-      hlsInstance.audioTrack = englishIndex;
+      hlsRef.current.audioTrack = englishIndex;
     }
   }
 };
 useEffect(() => {
-  let hls = null;
 
   if (cleanUrl && videoRef.current) {
     const video = videoRef.current;
@@ -223,7 +223,7 @@ useEffect(() => {
       };
 
       if (Hls.isSupported()) {
-        hls = new Hls({
+        hlsRef.current = new Hls({
           // CRITICAL: Ensure range headers are allowed for seeking
           xhrSetup: (xhr) => {
             xhr.withCredentials = false; // Set to true only if using cookies
@@ -234,31 +234,36 @@ useEffect(() => {
           enableWorker: true
         });
 
-        hls.loadSource(cleanUrl);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          // Automatic selection of English audio
-          selectEnglishAudio(hls);
-          // Update available tracks for UI
-          setAudioTracks(hls.audioTracks);
+        hlsRef.current.loadSource(cleanUrl);
+        hlsRef.current.attachMedia(video);
+        hlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Initial check on manifest parsed
+          setAudioTracks(hlsRef.current.audioTracks);
+          selectEnglishAudio(hlsRef.current.audioTracks);
           startPlayback();
         });
 
-        hls.on(Hls.Events.ERROR, (event, data) => {
+        hlsRef.current.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+          // Handle race condition: select when tracks are updated
+          setAudioTracks(hlsRef.current.audioTracks);
+          selectEnglishAudio(hlsRef.current.audioTracks);
+        });
+
+        hlsRef.current.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 console.error("Network error, trying to recover...");
-                hls.startLoad();
+                hlsRef.current.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.error("Media error, trying to recover...");
-                hls.recoverMediaError();
+                hlsRef.current.recoverMediaError();
                 break;
               default:
                 console.error("Fatal error, destroying player");
                 setError("Streaming Error: Please try again or refresh.");
-                hls.destroy();
+                hlsRef.current.destroy();
                 break;
             }
           }
@@ -287,8 +292,9 @@ useEffect(() => {
 
   // CLEANUP: Destroy HLS instance when component unmounts or URL changes
   return () => {
-    if (hls) {
-      hls.destroy();
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
     if (progressInterval.current) {
       clearInterval(progressInterval.current);
@@ -341,15 +347,19 @@ triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode);
   };
 // --- Toggle audio language ---
 const toggleAudio = () => {
-  if (audioTracks.length > 1 && hls) {
-    const currentIndex = hls.audioTrack;
+  if (audioTracks.length > 1 && hlsRef.current) {
+    const currentIndex = hlsRef.current.audioTrack;
     const originalIndex = 0; // Assume first is original
     const englishIndex = audioTracks.findIndex(track => 
-      (track.lang && track.lang.toLowerCase() === 'en') || 
-      (track.name && track.name.toLowerCase().includes('english'))
+      (track.lang && track.lang.toLowerCase().includes('en')) || 
+      (track.name && track.name.toLowerCase().includes('en')) ||
+      (track.name && track.name.toLowerCase().includes('dub'))
     );
     if (englishIndex !== -1) {
-      hls.audioTrack = (selectedAudio === 'original') ? englishIndex : originalIndex;
+      const newIndex = (selectedAudio === 'original') ? englishIndex : originalIndex;
+      hlsRef.current.audioTrack = newIndex;
+      // Force reload of audio level to sync switch
+      hlsRef.current.nextLevel = hlsRef.current.currentLevel;
       setSelectedAudio(selectedAudio === 'original' ? 'english' : 'original');
     }
   }
