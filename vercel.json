@@ -1,11 +1,25 @@
 {
-  "functions": {
-    "api/*.js": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  },
+  "version": 2,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.js" }
-  ]
+    {
+      "source": "/api/proxy/(.*)",
+      "destination": "/api/proxy.js"
+    },
+    {
+      "source": "/api/proxy",
+      "destination": "/api/proxy.js"
+    },
+    {
+      "source": "/api/scrape-stream",
+      "destination": "/api/scrape-stream.js"
+    }
+  ],
+  "functions": {
+    "api/proxy.js": {
+      "maxDuration": 30
+    },
+    "api/scrape-stream.js": {
+      "maxDuration": 30
+    }
+  }
 }
