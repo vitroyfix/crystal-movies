@@ -5,6 +5,7 @@ import chromium from '@sparticuz/chromium';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import fetch from 'node-fetch'; // Ensure you have node-fetch installed or use built-in fetch if on Node 18+
 
 dotenv.config();
 
@@ -33,6 +34,34 @@ try {
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 let isBusy = false;
+
+// --- NEW PROXY ROUTE TO BYPASS CORS/403 ---
+app.get('/api/proxy', async (req, res) => {
+    const videoUrl = req.query.url;
+    if (!videoUrl) return res.status(400).send("No URL provided");
+
+    try {
+        const response = await fetch(videoUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': 'https://vidlink.pro/',
+                'Origin': 'https://vidlink.pro'
+            }
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType) res.setHeader('Content-Type', contentType);
+        
+        // Allow your frontend to see the stream
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        const arrayBuffer = await response.arrayBuffer();
+        res.send(Buffer.from(arrayBuffer));
+    } catch (err) {
+        console.error("[PROXY ERROR]:", err.message);
+        res.status(500).send("Proxy failed to fetch stream.");
+    }
+});
 
 // --- SCRAPER ROUTE ---
 app.get('/api/scrape-stream', async (req, res) => { 
@@ -95,6 +124,7 @@ app.get('/api/scrape-stream', async (req, res) => {
         }
 
         if (videoUrl) {
+            // Return the link as usual
             res.json({ success: true, url: videoUrl });
         } else {
             res.status(404).json({ success: false, message: "Stream not found." });
@@ -112,7 +142,6 @@ app.get('/api/scrape-stream', async (req, res) => {
 // --- SILENT FAIL SUPABASE ROUTES ---
 app.post('/api/save-progress', async (req, res) => {
     if (!supabase) return res.json({ success: false, message: "DB not initialized, skipping." });
-
     const { userId, mediaId, time, title, poster, type, season, episode } = req.body;
     try {
         const { error } = await supabase.from('user_progress').upsert({ 
@@ -128,7 +157,6 @@ app.post('/api/save-progress', async (req, res) => {
 
 app.post('/api/add-to-watchlist', async (req, res) => {
     if (!supabase) return res.json({ success: false, message: "DB not initialized, skipping." });
-
     const { userId, mediaId, title, poster, type, year } = req.body;
     try {
         const { error } = await supabase.from('watchlist').upsert({ 

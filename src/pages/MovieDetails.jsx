@@ -11,6 +11,8 @@ import { supabase } from "../../src/services/supabaseClient";
 
 // --- SCRAPER URL REMAINS ---
 const BACKEND_URL = '/api/scrape-stream';
+// --- NEW: PROXY URL ---
+const PROXY_URL = '/api/proxy';
 
 const MovieDetails = () => {
   const { id, mediaType: typeFromPath } = useParams();
@@ -171,6 +173,7 @@ const MovieDetails = () => {
     id, resolvedMediaType, false, selectedSeason, movie?.title || movie?.name || ""
   );
 
+  // --- UPDATED: TRIGGER BACKEND SCRAPE WITH PROXY ---
   const triggerBackendScrape = async (mId, mType, s, e) => {
     setIsCleaning(true); setCleanUrl(null); setError(null);
     try {
@@ -178,10 +181,19 @@ const MovieDetails = () => {
       const response = await fetch(url);
       if (!response.ok) throw new Error("Server error");
       const data = await response.json();
-      if (data.success && data.url) setCleanUrl(data.url);
-      else setError("Stream could not be found.");
-    } catch (err) { setError("Server is offline or encountered an error."); }
-    finally { setIsCleaning(false); }
+      
+      if (data.success && data.url) {
+        // Wrap the scraped URL with our backend proxy to fix CORS/403
+        const proxiedUrl = `${PROXY_URL}?url=${encodeURIComponent(data.url)}`;
+        setCleanUrl(proxiedUrl);
+      } else {
+        setError("Stream could not be found.");
+      }
+    } catch (err) { 
+      setError("Server is offline or encountered an error."); 
+    } finally { 
+      setIsCleaning(false); 
+    }
   };
 
   const handleAutoPlayNext = () => {
@@ -206,10 +218,18 @@ const MovieDetails = () => {
         };
 
         if (Hls.isSupported()) {
-          const hls = new Hls(); hls.loadSource(cleanUrl); hls.attachMedia(video);
+          const hls = new Hls({
+            // Ensure HLS.js handles the proxied stream correctly
+            xhrSetup: (xhr) => {
+                xhr.withCredentials = false;
+            }
+          }); 
+          hls.loadSource(cleanUrl); 
+          hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = cleanUrl; video.onloadedmetadata = startPlayback;
+          video.src = cleanUrl; 
+          video.onloadedmetadata = startPlayback;
         }
 
         video.onpause = () => saveProgress(video.currentTime);
