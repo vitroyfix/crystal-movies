@@ -1,7 +1,6 @@
 import express from 'express';
 import puppeteer from 'puppeteer-extra';
 import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
-// Note: We stop importing the StealthPlugin here because it's crashing the Vercel build
 import chromium from '@sparticuz/chromium'; 
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
@@ -18,13 +17,24 @@ app.use(cors({
 }));
 app.use(express.json()); 
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+// --- FAIL-SAFE SUPABASE INITIALIZATION ---
+let supabase = null;
+try {
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+        supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+        console.log("[SUPABASE] Client initialized successfully.");
+    } else {
+        console.warn("[SUPABASE] Missing environment variables. Database features will be skipped.");
+    }
+} catch (error) {
+    console.error("[SUPABASE] Initialization failed:", error.message);
+}
 
-// Use the Adblocker as you intended
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 let isBusy = false;
 
+// --- SCRAPER ROUTE ---
 app.get('/api/scrape-stream', async (req, res) => { 
     if (isBusy) return res.status(429).json({ error: "Server busy." });
 
@@ -49,8 +59,6 @@ app.get('/api/scrape-stream', async (req, res) => {
 
         const page = await browser.newPage();
 
-        // --- MANUAL STEALTH REPLACEMENT ---
-        // This does exactly what the plugin does but without the "Missing Module" error
         await page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
         });
@@ -75,7 +83,6 @@ app.get('/api/scrape-stream', async (req, res) => {
         let target = `https://vidlink.pro/${type}/${id}`;
         if (type === 'tv' && s && e) target = `https://vidlink.pro/tv/${id}/${s}/${e}`;
 
-        // Set User Agent manually (Safe Stealth)
         await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
         await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 35000 });
@@ -102,8 +109,10 @@ app.get('/api/scrape-stream', async (req, res) => {
     }
 });
 
-// --- SUPABASE ROUTES ---
+// --- SILENT FAIL SUPABASE ROUTES ---
 app.post('/api/save-progress', async (req, res) => {
+    if (!supabase) return res.json({ success: false, message: "DB not initialized, skipping." });
+
     const { userId, mediaId, time, title, poster, type, season, episode } = req.body;
     try {
         const { error } = await supabase.from('user_progress').upsert({ 
@@ -111,10 +120,15 @@ app.post('/api/save-progress', async (req, res) => {
         }, { onConflict: 'user_id,media_id' });
         if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.warn("[SUPABASE] Save failed, ignoring:", e.message);
+        res.json({ success: false, error: "Database operation ignored." }); 
+    }
 });
 
 app.post('/api/add-to-watchlist', async (req, res) => {
+    if (!supabase) return res.json({ success: false, message: "DB not initialized, skipping." });
+
     const { userId, mediaId, title, poster, type, year } = req.body;
     try {
         const { error } = await supabase.from('watchlist').upsert({ 
@@ -122,7 +136,10 @@ app.post('/api/add-to-watchlist', async (req, res) => {
         }, { onConflict: 'user_id,media_id' });
         if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { 
+        console.warn("[SUPABASE] Watchlist failed, ignoring:", e.message);
+        res.json({ success: false, error: "Database operation ignored." }); 
+    }
 });
 
 export default app;
