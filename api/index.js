@@ -33,7 +33,7 @@ if (!supabase) {
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
-// --- 1. ENHANCED PROXY ROUTE (Handles Manifest Rewriting and Header Forwarding) ---
+// --- 1. ENHANCED PROXY ROUTE (Handles Manifest Rewriting and Header Forwarding, with Audio Track Support) ---
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
@@ -69,26 +69,35 @@ app.get('/api/proxy', async (req, res) => {
         }
         res.status(response.status);
 
-        // IF MANIFEST: Rewrite URLs to stay inside the proxy
+        // IF MANIFEST: Rewrite URLs to stay inside the proxy, including audio URIs in #EXT-X-MEDIA
         if (contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
             let text = await response.text();
             const providerBase = new URL(targetUrl).origin + new URL(targetUrl).pathname.replace(/[^/]+$/, '');
 
-            const rewrittenText = text.split('\n').map(line => {
+            const lines = text.split('\n');
+            let rewrittenText = '';
+            for (let line of lines) {
                 if (line.trim() && !line.startsWith('#')) {
-                    // Ensure the segment URL is absolute (handles relative and absolute)
+                    // Rewrite segment/playlist lines
                     const absoluteUrl = line.startsWith('http') ? line : new URL(line, providerBase).href;
-                    // Wrap segment/playlist in our proxy
-                    return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+                    line = `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+                } else if (line.startsWith('#EXT-X-MEDIA')) {
+                    // Preserve #EXT-X-MEDIA but rewrite URI if present (for separate audio manifests)
+                    const uriMatch = line.match(/URI="([^"]+)"/);
+                    if (uriMatch) {
+                        const uri = uriMatch[1];
+                        const absoluteUri = uri.startsWith('http') ? uri : new URL(uri, providerBase).href;
+                        line = line.replace(uriMatch[0], `URI="/api/proxy?url=${encodeURIComponent(absoluteUri)}"`);
+                    }
                 }
-                return line;
-            }).join('\n');
+                rewrittenText += line + '\n';
+            }
 
             res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
             return res.send(rewrittenText);
         }
 
-        // IF VIDEO SEGMENT (.ts, .m4s): Stream binary data to avoid memory issues
+        // IF VIDEO SEGMENT (.ts, .m4s): Stream binary data
         response.body.pipe(res);
 
     } catch (err) {

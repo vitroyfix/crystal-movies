@@ -29,6 +29,8 @@ const [activeStream, setActiveStream] = useState(null);
 const [cleanUrl, setCleanUrl] = useState(null);
 const [isCleaning, setIsCleaning] = useState(false);
 const [error, setError] = useState(null);
+const [audioTracks, setAudioTracks] = useState([]);
+const [selectedAudio, setSelectedAudio] = useState('original'); // 'original' or 'english'
 const videoRef = useRef(null);
 const progressInterval = useRef(null);
 // --- AUTH & WATCHLIST ---
@@ -180,6 +182,19 @@ setActiveStream(null);
       }
     }
   };
+// --- Function to select English audio track ---
+const selectEnglishAudio = (hlsInstance) => {
+  const tracks = hlsInstance.audioTracks;
+  if (tracks.length > 1) {
+    const englishIndex = tracks.findIndex(track => 
+      (track.lang && track.lang.toLowerCase() === 'en') || 
+      (track.name && track.name.toLowerCase().includes('english'))
+    );
+    if (englishIndex !== -1) {
+      hlsInstance.audioTrack = englishIndex;
+    }
+  }
+};
 useEffect(() => {
   let hls = null;
 
@@ -221,7 +236,13 @@ useEffect(() => {
 
         hls.loadSource(cleanUrl);
         hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, startPlayback);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Automatic selection of English audio
+          selectEnglishAudio(hls);
+          // Update available tracks for UI
+          setAudioTracks(hls.audioTracks);
+          startPlayback();
+        });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
@@ -318,6 +339,21 @@ setActiveStream(true);
 triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode);
     }
   };
+// --- Toggle audio language ---
+const toggleAudio = () => {
+  if (audioTracks.length > 1 && hls) {
+    const currentIndex = hls.audioTrack;
+    const originalIndex = 0; // Assume first is original
+    const englishIndex = audioTracks.findIndex(track => 
+      (track.lang && track.lang.toLowerCase() === 'en') || 
+      (track.name && track.name.toLowerCase().includes('english'))
+    );
+    if (englishIndex !== -1) {
+      hls.audioTrack = (selectedAudio === 'original') ? englishIndex : originalIndex;
+      setSelectedAudio(selectedAudio === 'original' ? 'english' : 'original');
+    }
+  }
+};
 if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><RefreshCw className="animate-spin text-white" size={40} /></div>;
 if (!movie) return null;
 const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, cast, genre, language, votes, release_date, first_air_date } = movie;
@@ -445,7 +481,17 @@ className="fixed top-6 left-6 md:top-8 md:left-20 z-[60] flex items-center gap-2
 <button onClick={() => triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode)} className="mt-6 border border-white/20 px-6 py-2 text-[10px] uppercase font-bold hover:bg-white/10 transition-all">Retry Connection</button>
 </div>
             ) : cleanUrl ? (
-<video ref={videoRef} controls autoPlay playsInline className="w-full h-full object-contain bg-black" />
+<div className="relative w-full h-full">
+  <video ref={videoRef} controls autoPlay playsInline className="w-full h-full object-contain bg-black" />
+  {audioTracks.length > 1 && (
+    <button 
+      onClick={toggleAudio} 
+      className="absolute bottom-4 right-4 bg-black/70 text-white px-4 py-2 rounded text-sm"
+    >
+      {selectedAudio === 'original' ? 'Switch to English' : 'Switch to Original'}
+    </button>
+  )}
+</div>
             ) : isPlaying ? (
 <iframe src={trailerUrl} className="w-full h-full border-none" allowFullScreen title="Trailer" />
             ) : null}
