@@ -219,9 +219,12 @@ const MovieDetails = () => {
 
         if (Hls.isSupported()) {
           const hls = new Hls({
-            // Ensure HLS.js handles the proxied stream correctly
+            // INJECT HEADERS TO BYPASS 403 VIA PROXY
             xhrSetup: (xhr) => {
                 xhr.withCredentials = false;
+                // Add referer spoofing to the request headers
+                xhr.setRequestHeader('Referer', 'https://vidlink.pro/');
+                xhr.setRequestHeader('Origin', 'https://vidlink.pro');
             }
           }); 
           hls.loadSource(cleanUrl); 
