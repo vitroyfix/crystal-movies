@@ -10,7 +10,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Standard CORS configuration
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json()); 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -20,6 +26,7 @@ puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 let isBusy = false;
 
+// --- SCRAPER ROUTE ---
 app.get('/api/scrape-stream', async (req, res) => { 
     if (isBusy) return res.status(429).json({ error: "Server busy." });
 
@@ -30,7 +37,6 @@ app.get('/api/scrape-stream', async (req, res) => {
     let browser;
 
     try {
-        // --- THE FIX: Detect if we are on your ThinkPad ---
         const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
         
         console.log(`[SCRAPER] Environment: ${isLocal ? 'LOCAL (ThinkPad)' : 'PRODUCTION (Cloud)'}`);
@@ -40,14 +46,13 @@ app.get('/api/scrape-stream', async (req, res) => {
                 ? ['--no-sandbox', '--disable-setuid-sandbox'] 
                 : [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
             executablePath: isLocal 
-                ? '/usr/bin/google-chrome' // Uses your fixed Ubuntu Chrome
-                : await chromium.executablePath(), // Uses Vercel's Lite Chrome
+                ? '/usr/bin/google-chrome' 
+                : await chromium.executablePath(),
             headless: isLocal ? true : chromium.headless,
         });
 
         const page = await browser.newPage();
         
-        // Speed Optimization
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'font', 'stylesheet'].includes(req.resourceType())) {
@@ -70,6 +75,8 @@ app.get('/api/scrape-stream', async (req, res) => {
 
         await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
+        // Note: Real Vercel has a 10s timeout on hobby plans. 
+        // We set 25s for local, but the cloud might cut it short.
         await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 25000 });
         await page.mouse.click(640, 360); 
 
@@ -117,4 +124,5 @@ app.post('/api/add-to-watchlist', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Important: Export for Vercel
 export default app;
