@@ -21,7 +21,12 @@ app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-puppeteer.use(StealthPlugin());
+// --- THE FIX FOR "chrome.app" ERROR ---
+const stealth = StealthPlugin();
+// We delete 'chrome.app' because it tries to access a file path that doesn't exist on Vercel
+stealth.enabledEvasions.delete('chrome.app'); 
+puppeteer.use(stealth);
+
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 let isBusy = false;
@@ -75,13 +80,12 @@ app.get('/api/scrape-stream', async (req, res) => {
 
         await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-        // Note: Real Vercel has a 10s timeout on hobby plans. 
-        // We set 25s for local, but the cloud might cut it short.
-        await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 25000 });
+        // Note: Using the duration from your vercel.json (60s)
+        await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 35000 });
         await page.mouse.click(640, 360); 
 
         let attempts = 0;
-        while (!videoUrl && attempts < 30) { 
+        while (!videoUrl && attempts < 40) { 
             await new Promise(r => setTimeout(r, 500));
             attempts++;
         }
@@ -124,5 +128,4 @@ app.post('/api/add-to-watchlist', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Important: Export for Vercel
 export default app;
