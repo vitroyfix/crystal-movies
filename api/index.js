@@ -1,7 +1,7 @@
 import express from 'express';
 import puppeteer from 'puppeteer-extra';
 import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth'; 
+// Note: We stop importing the StealthPlugin here because it's crashing the Vercel build
 import chromium from '@sparticuz/chromium'; 
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
@@ -11,7 +11,6 @@ dotenv.config();
 
 const app = express();
 
-// Standard CORS configuration
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -21,22 +20,11 @@ app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- THE ULTIMATE FIX FOR "MISSING MODULE" ERRORS ---
-const stealth = StealthPlugin();
-// 1. Reset everything to prevent it from looking for missing files
-stealth.enabledEvasions.clear();
-// 2. Only add back the safe ones that work in serverless environments
-stealth.enabledEvasions.add('user-agent-override');
-stealth.enabledEvasions.add('navigator.webdriver');
-stealth.enabledEvasions.add('navigator.plugins');
-stealth.enabledEvasions.add('media.codecs');
-puppeteer.use(stealth);
-
+// Use the Adblocker as you intended
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 let isBusy = false;
 
-// --- SCRAPER ROUTE ---
 app.get('/api/scrape-stream', async (req, res) => { 
     if (isBusy) return res.status(429).json({ error: "Server busy." });
 
@@ -49,8 +37,6 @@ app.get('/api/scrape-stream', async (req, res) => {
     try {
         const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
         
-        console.log(`[SCRAPER] Environment: ${isLocal ? 'LOCAL (ThinkPad)' : 'PRODUCTION (Cloud)'}`);
-
         browser = await puppeteer.launch({
             args: isLocal 
                 ? ['--no-sandbox', '--disable-setuid-sandbox'] 
@@ -62,6 +48,12 @@ app.get('/api/scrape-stream', async (req, res) => {
         });
 
         const page = await browser.newPage();
+
+        // --- MANUAL STEALTH REPLACEMENT ---
+        // This does exactly what the plugin does but without the "Missing Module" error
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        });
         
         await page.setRequestInterception(true);
         page.on('request', (req) => {
@@ -83,6 +75,7 @@ app.get('/api/scrape-stream', async (req, res) => {
         let target = `https://vidlink.pro/${type}/${id}`;
         if (type === 'tv' && s && e) target = `https://vidlink.pro/tv/${id}/${s}/${e}`;
 
+        // Set User Agent manually (Safe Stealth)
         await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
         await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 35000 });
