@@ -3,22 +3,19 @@
   "rewrites": [
     {
       "source": "/api/proxy/(.*)",
-      "destination": "/api/proxy.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/proxy",
-      "destination": "/api/proxy.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/scrape-stream",
-      "destination": "/api/scrape-stream.js"
+      "destination": "/api/index.js"
     }
   ],
   "functions": {
-    "api/proxy.js": {
-      "maxDuration": 30
-    },
-    "api/scrape-stream.js": {
+    "api/index.js": {
       "maxDuration": 30
     }
   }
