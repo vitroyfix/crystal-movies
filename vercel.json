@@ -20,14 +20,18 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, Range"
+          "value": "Content-Type, Authorization, Range, x-api-key"
+        },
+        {
+          "key": "Access-Control-Expose-Headers",
+          "value": "Content-Range, Accept-Ranges"
         }
       ]
     }
   ],
   "functions": {
     "api/index.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }

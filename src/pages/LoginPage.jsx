@@ -109,17 +109,28 @@ const LoginPage = () => {
     }
   };
 
+  // UPDATED: Added actionCodeSettings to prevent Spam and handle redirect
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     if (!email) return setError("Please enter your email address first.");
     setError("");
     setLoading(true);
+
+    const actionCodeSettings = {
+      // The URL to redirect to after password reset. 
+      url: "https://crystalmovies.vercel.app/login",
+      handleCodeInApp: true,
+    };
+
     try {
-      await sendPasswordResetEmail(auth, email);
-      setSuccessMsg("Reset link sent! Check your inbox.");
-      setTimeout(() => setView("login"), 5000);
+      await sendPasswordResetEmail(auth, email, actionCodeSettings);
+      setSuccessMsg("Secure link transmitted. Check your registered inbox.");
+      setTimeout(() => {
+        setSuccessMsg("");
+        setView("login");
+      }, 5000);
     } catch (err) {
-      setError("Failed to send reset email.");
+      setError("Transmission failed. Verify the target email.");
     } finally {
       setLoading(false);
     }

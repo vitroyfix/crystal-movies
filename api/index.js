@@ -6,32 +6,36 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
-import { URL } from 'url'; // Built-in for URL parsing
+import { URL } from 'url';
+import CryptoJS from 'crypto-js'; // <--- NEW: Added for secure subtitle tunnel
+
 dotenv.config();
 const app = express();
+
 app.use(cors({
-origin: '*',
-methods: ['GET', 'POST', 'OPTIONS'],
-allowedHeaders: ['Content-Type', 'Authorization', 'Range']
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range']
 }));
 app.use(express.json());
+
 // --- SUPABASE INITIALIZATION ---
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
-// Ensure Supabase is initialized
 if (!supabase) {
     console.error('Supabase not initialized. Check env vars.');
 }
+
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
-// --- 1. ENHANCED PROXY ROUTE (Handles Manifest Rewriting and Header Forwarding, with Audio Track Support) ---
+
+// --- 1. ENHANCED PROXY ROUTE ---
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
     try {
-        // Forward relevant client headers (e.g., Range for partial content)
         const forwardedHeaders = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Referer': 'https://vidlink.pro/',
@@ -47,7 +51,6 @@ app.get('/api/proxy', async (req, res) => {
             return res.status(response.status).send(await response.text());
         }
         const contentType = response.headers.get('content-type') || "";
-        // Forward important response headers (e.g., for partial content)
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', contentType);
         if (response.headers.get('content-range')) {
@@ -57,7 +60,7 @@ app.get('/api/proxy', async (req, res) => {
             res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
         }
         res.status(response.status);
-        // IF MANIFEST: Rewrite URLs to stay inside the proxy, including audio URIs in #EXT-X-MEDIA
+        
         if (contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
             let text = await response.text();
             const providerBase = new URL(targetUrl).origin + new URL(targetUrl).pathname.replace(/[^/]+$/, '');
@@ -65,11 +68,9 @@ app.get('/api/proxy', async (req, res) => {
             let rewrittenText = '';
             for (let line of lines) {
                 if (line.trim() && !line.startsWith('#')) {
-                    // Rewrite segment/playlist lines
                     const absoluteUrl = line.startsWith('http') ? line : new URL(line, providerBase).href;
                     line = `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
                 } else if (line.startsWith('#EXT-X-MEDIA') && (line.includes('TYPE=AUDIO') || line.includes('TYPE=SUBTITLES'))) {
-                    // Preserve #EXT-X-MEDIA but rewrite URI if present (for separate audio/subtitle manifests), handling different quote styles
                     const uriMatch = line.match(/URI\s*=\s*(["']?)([^"'\s]+)\1/);
                     if (uriMatch) {
                         const uri = uriMatch[2];
@@ -82,14 +83,14 @@ app.get('/api/proxy', async (req, res) => {
             res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
             return res.send(rewrittenText);
         }
-        // IF VIDEO SEGMENT (.ts, .m4s): Stream binary data
         response.body.pipe(res);
     } catch (err) {
         console.error("[PROXY ERROR]:", err.message);
         res.status(502).send("Proxy failed to reach provider.");
     }
 });
-// --- 2. OPTIMIZED SCRAPER ROUTE WITH SUPABASE CACHING ---
+
+// --- 2. OPTIMIZED SCRAPER ROUTE ---
 app.get('/api/scrape-stream', async (req, res) => {
     const { id, type, s, e } = req.query;
     if (!id || !type) return res.status(400).json({ error: "Missing ID/Type" });
@@ -97,13 +98,12 @@ app.get('/api/scrape-stream', async (req, res) => {
     const cacheKey = `${id}-${type}-${s || ''}-${e || ''}`;
     let videoUrl = null;
     try {
-        // Check cache first
         const { data: cacheData, error: cacheError } = await supabase
             .from('streams')
             .select('url, expires_at')
             .eq('key', cacheKey)
             .single();
-        if (cacheError && cacheError.code !== 'PGRST116') { // Ignore "no row" error
+        if (cacheError && cacheError.code !== 'PGRST116') { 
             throw cacheError;
         }
         const now = new Date().toISOString();
@@ -111,7 +111,6 @@ app.get('/api/scrape-stream', async (req, res) => {
             videoUrl = cacheData.url;
         }
         if (!videoUrl) {
-            // Scrape if no valid cache
             let browser;
             const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
             browser = await puppeteer.launch({
@@ -124,7 +123,6 @@ app.get('/api/scrape-stream', async (req, res) => {
                 headless: isLocal ? true : chromium.headless,
             });
             const page = await browser.newPage();
-            // Intercept requests to find the master m3u8
             await page.setRequestInterception(true);
             page.on('request', (request) => {
                 const url = request.url();
@@ -141,7 +139,6 @@ app.get('/api/scrape-stream', async (req, res) => {
             if (type === 'tv' && s && e) target = `https://vidlink.pro/tv/${id}/${s}/${e}`;
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            // Trigger play button to start network activity
             await page.mouse.click(640, 360).catch(() => {});
             let attempts = 0;
             while (!videoUrl && attempts < 30) {
@@ -152,7 +149,6 @@ app.get('/api/scrape-stream', async (req, res) => {
             if (!videoUrl) {
                 return res.status(404).json({ success: false, message: "Stream not found." });
             }
-            // Cache the URL (e.g., 1 hour expiry)
             const expiresAt = new Date(Date.now() + 3600000).toISOString();
             await supabase.from('streams').upsert({
                 key: cacheKey,
@@ -160,7 +156,6 @@ app.get('/api/scrape-stream', async (req, res) => {
                 expires_at: expiresAt
             }, { onConflict: 'key' });
         }
-        // Return proxied URL
         const proxiedUrl = `/api/proxy?url=${encodeURIComponent(videoUrl)}`;
         res.json({ success: true, url: proxiedUrl });
     } catch (err) {
@@ -168,13 +163,139 @@ app.get('/api/scrape-stream', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-// --- DATABASE ROUTES (STAY THE SAME) ---
+
+// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE ---
+app.post('/api/subs', async (req, res) => {
+    // The key must match the one in your React Native app's .env file
+    const SECRET_KEY = process.env.ENCRYPTION_KEY || "SuperSecretCrystalKey2026!";
+    const OS_BASE = "https://api.opensubtitles.com/api/v1";
+
+    try {
+        const encryptedPayload = req.body.data;
+        if (!encryptedPayload) {
+            return res.status(400).json({ error: "Missing encrypted data payload" });
+        }
+
+        // 1. Decrypt the request from the app
+        const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
+        const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
+        if (!decryptedString) {
+            return res.status(400).json({ error: "Invalid encryption key or payload" });
+        }
+
+        const { imdbId, type, season, episode } = JSON.parse(decryptedString);
+
+        // 2. Prepare headers for OpenSubtitles
+        const osHeaders = {
+            "Api-Key": process.env.OPENSUBTITLES_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": process.env.OPENSUBTITLES_USER_AGENT
+        };
+
+        // 3. Login to get token
+        const loginRes = await fetch(`${OS_BASE}/login`, {
+            method: "POST",
+            headers: osHeaders,
+            body: JSON.stringify({
+                username: process.env.OPENSUBTITLES_USERNAME,
+                password: process.env.OPENSUBTITLES_PASSWORD
+            })
+        });
+        
+        const loginData = await loginRes.json();
+        if (loginData.token) {
+            osHeaders["Authorization"] = `Bearer ${loginData.token}`;
+        }
+
+        // 4. Search for subtitles
+        const params = new URLSearchParams({
+            tmdb_id: imdbId,
+            languages: "en",
+            order_by: "download_count",
+            order_direction: "desc",
+        });
+
+        if (type === "tv" && season && episode) {
+            params.append("season_number", season);
+            params.append("episode_number", episode);
+            params.append("type", "episode");
+        } else {
+            params.append("type", "movie");
+        }
+
+        const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, {
+            headers: osHeaders
+        });
+        const searchData = await searchRes.json();
+
+        // 5. Filter for best tracks (max 6)
+        let tracksToDownload = [];
+        if (searchData.data && searchData.data.length > 0) {
+            const sorted = searchData.data.sort((a, b) => {
+                const aT = a.attributes.from_trusted ? 1 : 0;
+                const bT = b.attributes.from_trusted ? 1 : 0;
+                if (bT !== aT) return bT - aT;
+                return b.attributes.download_count - a.attributes.download_count;
+            });
+
+            const seenLanguages = new Set();
+            for (const item of sorted) {
+                const attrs = item.attributes;
+                const lang = attrs.language;
+                if (seenLanguages.has(lang) || attrs.nb_cd > 1 || !attrs.files || !attrs.files.length) continue;
+
+                tracksToDownload.push({
+                    title: attrs.language_name || lang.toUpperCase() || "Unknown",
+                    language: lang || "en",
+                    fileId: attrs.files[0].file_id
+                });
+                seenLanguages.add(lang);
+                if (tracksToDownload.length >= 6) break;
+            }
+        }
+
+        // 6. Download links
+        const finalTracks = [];
+        for (const track of tracksToDownload) {
+            const dlRes = await fetch(`${OS_BASE}/download`, {
+                method: "POST",
+                headers: osHeaders,
+                body: JSON.stringify({ file_id: track.fileId })
+            });
+            const dlData = await dlRes.json();
+            if (dlData.link) {
+                finalTracks.push({
+                    title: track.title,
+                    language: track.language,
+                    uri: dlData.link
+                });
+            }
+        }
+
+        // 7. Encrypt the final results to send back to the app
+        const encryptedResponse = CryptoJS.AES.encrypt(
+            JSON.stringify({ tracks: finalTracks }), 
+            SECRET_KEY
+        ).toString();
+
+        res.status(200).json({ data: encryptedResponse });
+
+    } catch (error) {
+        console.error("[SUBTITLE ERROR]:", error);
+        res.status(500).json({ error: "Failed to process securely" });
+    }
+});
+
+// --- DATABASE ROUTES ---
 app.post('/api/save-progress', async (req, res) => {
-if (!supabase) return res.json({ success: false });
-// ... logic same as your provided code
+    if (!supabase) return res.json({ success: false });
+    // ... logic same as your provided code
 });
+
 app.post('/api/add-to-watchlist', async (req, res) => {
-if (!supabase) return res.json({ success: false });
-// ... logic same as your provided code
+    if (!supabase) return res.json({ success: false });
+    // ... logic same as your provided code
 });
+
 export default app;

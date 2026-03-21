@@ -22,7 +22,6 @@ const Profile = () => {
   const overviewRef = useRef(null);
   const watchlistRef = useRef(null);
 
-  // Using VITE_ prefix for environment variables to work with Vite/Vercel
   const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY; 
   const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
 
@@ -49,10 +48,21 @@ const Profile = () => {
 
       if (pError) throw pError;
 
-      const progressArray = await Promise.all((progressData || []).map(async (item) => {
+      // --- DEDUPLICATION LOGIC FOR TV SHOWS ---
+      // We only want to show the latest episode watched for any specific TV series
+      const seenSeries = new Set();
+      const dedupedData = (progressData || []).filter(item => {
+        if (item.type === 'movie') return true;
+        // Extract base ID (e.g., from tv_12345_s1_e1 to 12345)
+        const seriesId = item.media_id.split('_')[1];
+        if (seenSeries.has(seriesId)) return false;
+        seenSeries.add(seriesId);
+        return true;
+      });
+
+      const progressArray = await Promise.all(dedupedData.map(async (item) => {
         if (item.time <= 0) return null;
         
-        // RESOLUTION: Extract numeric ID (e.g., 1084242) from prefixed media_id (e.g., movie_1084242)
         const parts = item.media_id.split('_');
         const baseId = parts.length > 1 ? parts[1] : parts[0];
         
@@ -61,9 +71,9 @@ const Profile = () => {
         
         return { 
           ...item,
-          id: baseId, // Clean TMDb numeric ID for URLs
+          id: baseId, 
           mediaType: item.type, 
-          fullMediaId: item.id, // Internal Supabase UUID for DB deletion
+          fullMediaId: item.id, 
           poster 
         };
       }));
@@ -187,7 +197,6 @@ const Profile = () => {
     <div className="min-h-screen bg-black text-white pt-20 md:pt-24 pb-20 px-4 md:px-20 font-sans selection:bg-red-600">
       <div className="max-w-7xl mx-auto space-y-8 md:y-12">
         
-        {/* BACK TO HOME BUTTON */}
         <button 
           onClick={() => navigate('/')}
           className="group flex items-center gap-2 text-zinc-500 hover:text-white transition-colors mb-4"
@@ -198,7 +207,6 @@ const Profile = () => {
           <span className="text-[10px] font-black uppercase tracking-[0.2em]">Back to Home</span>
         </button>
 
-        {/* HEADER */}
         <div className="relative flex flex-col md:flex-row items-center gap-6 md:gap-8 p-6 md:p-8 rounded-2xl md:rounded-3xl bg-gradient-to-br from-zinc-900 via-black to-black border border-white/10">
           <div className="w-28 h-28 md:w-40 md:h-40 rounded-full bg-zinc-800 flex items-center justify-center border-4 border-red-600 shadow-2xl overflow-hidden shrink-0">
             {currentUser?.photoURL ? <img src={currentUser.photoURL} className="w-full h-full object-cover" alt="User" /> : <User size={48} className="text-zinc-600" />}
@@ -212,7 +220,6 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* STATS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
           <StatCard icon={Film} label="History" value={userProgress.length} />
           <StatCard icon={Clock} label="Minutes" value={`${Math.ceil(userProgress.reduce((acc, curr) => acc + (curr.time || 0), 0) / 60)}m`} />
@@ -221,7 +228,6 @@ const Profile = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 md:gap-12">
-          {/* SIDEBAR */}
           <div className="lg:col-span-1 lg:sticky lg:top-24 h-fit space-y-4 md:space-y-8">
             <h3 className="text-xs font-black uppercase tracking-[0.3em] text-red-600 hidden lg:block">Account</h3>
             <nav className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible no-scrollbar pb-2 lg:pb-0">
@@ -242,34 +248,48 @@ const Profile = () => {
             </nav>
           </div>
 
-          {/* CONTENT AREA */}
           <div className="lg:col-span-2 space-y-10 md:space-y-12">
             <section ref={overviewRef} className="space-y-6 scroll-mt-32">
               <h3 className="text-xs font-black uppercase tracking-[0.3em] text-red-600">Continue Watching</h3>
               {userProgress.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
-                  {userProgress.map((item) => (
-                    <div 
-                      key={item.fullMediaId} 
-                      onClick={() => {
-                        const route = item.mediaType === 'tv' 
-                          ? `/details/tv/${item.id}/${item.season}/${item.episode}`
-                          : `/details/movie/${item.id}`;
-                        navigate(route);
-                      }}
-                      className="bg-zinc-900 rounded-xl md:rounded-2xl overflow-hidden border border-white/5 group cursor-pointer relative"
-                    >
-                      <button onClick={(e) => handleDeleteProgress(e, item.fullMediaId)} className="absolute top-2 right-2 z-20 p-2 bg-black/60 hover:bg-red-600 rounded-full md:opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button>
-                      <div className="relative aspect-video">
-                        <img src={getPosterUrl(item.poster, "original")} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt={item.title} />
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/20"><Play size={24} className="text-white/80 group-hover:scale-125 transition-transform" fill="currentColor" /></div>
+                  {userProgress.map((item) => {
+                    // Calculate percentage for progress bar
+                    const progressPercent = item.duration > 0 ? (item.time / item.duration) * 100 : 0;
+                    
+                    return (
+                      <div 
+                        key={item.fullMediaId} 
+                        onClick={() => {
+                          const route = item.mediaType === 'tv' 
+                            ? `/details/tv/${item.id}`
+                            : `/details/movie/${item.id}`;
+                          navigate(route);
+                        }}
+                        className="bg-zinc-900 rounded-xl md:rounded-2xl overflow-hidden border border-white/5 group cursor-pointer relative"
+                      >
+                        <button onClick={(e) => handleDeleteProgress(e, item.fullMediaId)} className="absolute top-2 right-2 z-20 p-2 bg-black/60 hover:bg-red-600 rounded-full md:opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button>
+                        <div className="relative aspect-video">
+                          <img src={getPosterUrl(item.poster, "original")} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt={item.title} />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20"><Play size={24} className="text-white/80 group-hover:scale-125 transition-transform" fill="currentColor" /></div>
+                          
+                          {/* PROGRESS BAR OVERLAY */}
+                          <div className="absolute bottom-0 left-0 w-full h-1 bg-white/10">
+                            <div 
+                              className="h-full bg-red-600 transition-all duration-500" 
+                              style={{ width: `${Math.min(progressPercent, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="p-4 md:p-5">
+                          <h4 className="font-bold text-xs md:text-sm uppercase truncate">{item.title}</h4>
+                          <p className="text-[9px] md:text-[10px] text-zinc-500 font-bold uppercase mt-1">
+                            {item.mediaType === 'tv' ? `S${item.season} E${item.episode}` : 'Movie'} • {Math.floor(item.time / 60)}m left
+                          </p>
+                        </div>
                       </div>
-                      <div className="p-4 md:p-5">
-                        <h4 className="font-bold text-xs md:text-sm uppercase truncate">{item.title}</h4>
-                        <p className="text-[9px] md:text-[10px] text-zinc-500 font-bold uppercase mt-1">{item.mediaType === 'tv' ? `S${item.season} E${item.episode}` : 'Movie'} • {Math.floor(item.time / 60)}m</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <EmptyState message="No watch history found" />

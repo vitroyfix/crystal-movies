@@ -8,6 +8,17 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    host: true, // <--- THIS OPENS VITE TO YOUR WI-FI
+    proxy: {
+      // Proxies '/api-football' to the football-data.org API to bypass CORS
+      '/api-football': {
+        target: 'https://api.football-data.org/v4',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api-football/, ''),
+      },
+    },
+  },
   build: {
     rollupOptions: {
       output: {
