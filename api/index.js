@@ -7,10 +7,14 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
 import { URL } from 'url';
-import CryptoJS from 'crypto-js'; // <--- NEW: Added for secure subtitle tunnel
+import CryptoJS from 'crypto-js';
 
 dotenv.config();
+
 const app = express();
+
+// Use the same key across your entire app (Mobile .env and Vercel Dashboard)
+const SECRET_KEY = process.env.ENCRYPTION_KEY || "a/tEB7GJe7FOH5m9xhOYEH2z18lJAlLpQVHsYmhIQnA=";
 
 app.use(cors({
   origin: '*',
@@ -31,7 +35,7 @@ if (!supabase) {
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
-// --- 1. ENHANCED PROXY ROUTE ---
+// --- 1. PROXY ROUTE (clean version from new code) ---
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
@@ -41,26 +45,17 @@ app.get('/api/proxy', async (req, res) => {
             'Referer': 'https://vidlink.pro/',
             'Origin': 'https://vidlink.pro/',
         };
-        if (req.headers.range) {
-            forwardedHeaders['Range'] = req.headers.range;
-        }
-        const response = await fetch(targetUrl, {
-            headers: forwardedHeaders
-        });
-        if (!response.ok) {
-            return res.status(response.status).send(await response.text());
-        }
+        if (req.headers.range) forwardedHeaders['Range'] = req.headers.range;
+       
+        const response = await fetch(targetUrl, { headers: forwardedHeaders });
+        if (!response.ok) return res.status(response.status).send(await response.text());
+
         const contentType = response.headers.get('content-type') || "";
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', contentType);
-        if (response.headers.get('content-range')) {
-            res.setHeader('Content-Range', response.headers.get('content-range'));
-        }
-        if (response.headers.get('accept-ranges')) {
-            res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
-        }
-        res.status(response.status);
-        
+        if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
+        if (response.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
+
         if (contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
             let text = await response.text();
             const providerBase = new URL(targetUrl).origin + new URL(targetUrl).pathname.replace(/[^/]+$/, '');
@@ -90,30 +85,40 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// --- 2. OPTIMIZED SCRAPER ROUTE ---
-app.get('/api/scrape-stream', async (req, res) => {
-    const { id, type, s, e } = req.query;
-    if (!id || !type) return res.status(400).json({ error: "Missing ID/Type" });
-    if (!supabase) return res.status(500).json({ error: "Database not available" });
-    const cacheKey = `${id}-${type}-${s || ''}-${e || ''}`;
-    let videoUrl = null;
+// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (new + old robustness) ---
+app.post('/api/scrape-stream', async (req, res) => {
+    const encryptedPayload = req.body.data;
+    if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data" });
+
     try {
+        const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
+        const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
+        if (!decryptedString) throw new Error("Decryption failed");
+
+        const { id, type, s, e } = JSON.parse(decryptedString);
+        if (!id || !type) return res.status(400).json({ error: "Missing ID/Type" });
+
+        if (!supabase) return res.status(500).json({ error: "Database not available" });
+
+        const cacheKey = `${id}-${type}-${s || ''}-${e || ''}`;
+        let videoUrl = null;
+
         const { data: cacheData, error: cacheError } = await supabase
             .from('streams')
             .select('url, expires_at')
             .eq('key', cacheKey)
             .single();
-        if (cacheError && cacheError.code !== 'PGRST116') { 
-            throw cacheError;
-        }
+
+        if (cacheError && cacheError.code !== 'PGRST116') throw cacheError;
+
         const now = new Date().toISOString();
         if (cacheData && cacheData.expires_at > now) {
             videoUrl = cacheData.url;
         }
+
         if (!videoUrl) {
-            let browser;
             const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
-            browser = await puppeteer.launch({
+            let browser = await puppeteer.launch({
                 args: isLocal
                     ? ['--no-sandbox', '--disable-setuid-sandbox']
                     : [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
@@ -135,20 +140,26 @@ app.get('/api/scrape-stream', async (req, res) => {
                     request.continue();
                 }
             });
+
             let target = `https://vidlink.pro/${type}/${id}`;
             if (type === 'tv' && s && e) target = `https://vidlink.pro/tv/${id}/${s}/${e}`;
+
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await page.mouse.click(640, 360).catch(() => {});
+
             let attempts = 0;
-            while (!videoUrl && attempts < 30) {
+            while (!videoUrl && attempts < 40) {
                 await new Promise(r => setTimeout(r, 500));
                 attempts++;
             }
-            if (browser) await browser.close();
+
+            await browser.close();
+
             if (!videoUrl) {
                 return res.status(404).json({ success: false, message: "Stream not found." });
             }
+
             const expiresAt = new Date(Date.now() + 3600000).toISOString();
             await supabase.from('streams').upsert({
                 key: cacheKey,
@@ -156,36 +167,27 @@ app.get('/api/scrape-stream', async (req, res) => {
                 expires_at: expiresAt
             }, { onConflict: 'key' });
         }
-        const proxiedUrl = `/api/proxy?url=${encodeURIComponent(videoUrl)}`;
-        res.json({ success: true, url: proxiedUrl });
+
+        res.json({ success: true, url: `/api/proxy?url=${encodeURIComponent(videoUrl)}` });
     } catch (err) {
         console.error("[SCRAPER ERROR]:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE ---
+// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE (full old logic restored) ---
 app.post('/api/subs', async (req, res) => {
-    // The key must match the one in your React Native app's .env file
-    const SECRET_KEY = process.env.ENCRYPTION_KEY || "SuperSecretCrystalKey2026!";
     const OS_BASE = "https://api.opensubtitles.com/api/v1";
-
     try {
         const encryptedPayload = req.body.data;
-        if (!encryptedPayload) {
-            return res.status(400).json({ error: "Missing encrypted data payload" });
-        }
+        if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data payload" });
 
-        // 1. Decrypt the request from the app
         const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
         const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
-        if (!decryptedString) {
-            return res.status(400).json({ error: "Invalid encryption key or payload" });
-        }
+        if (!decryptedString) return res.status(400).json({ error: "Invalid encryption key or payload" });
 
         const { imdbId, type, season, episode } = JSON.parse(decryptedString);
 
-        // 2. Prepare headers for OpenSubtitles
         const osHeaders = {
             "Api-Key": process.env.OPENSUBTITLES_API_KEY,
             "Content-Type": "application/json",
@@ -193,7 +195,7 @@ app.post('/api/subs', async (req, res) => {
             "User-Agent": process.env.OPENSUBTITLES_USER_AGENT
         };
 
-        // 3. Login to get token
+        // Login
         const loginRes = await fetch(`${OS_BASE}/login`, {
             method: "POST",
             headers: osHeaders,
@@ -202,20 +204,16 @@ app.post('/api/subs', async (req, res) => {
                 password: process.env.OPENSUBTITLES_PASSWORD
             })
         });
-        
         const loginData = await loginRes.json();
-        if (loginData.token) {
-            osHeaders["Authorization"] = `Bearer ${loginData.token}`;
-        }
+        if (loginData.token) osHeaders["Authorization"] = `Bearer ${loginData.token}`;
 
-        // 4. Search for subtitles
+        // Search
         const params = new URLSearchParams({
             tmdb_id: imdbId,
             languages: "en",
             order_by: "download_count",
             order_direction: "desc",
         });
-
         if (type === "tv" && season && episode) {
             params.append("season_number", season);
             params.append("episode_number", episode);
@@ -224,12 +222,10 @@ app.post('/api/subs', async (req, res) => {
             params.append("type", "movie");
         }
 
-        const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, {
-            headers: osHeaders
-        });
+        const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, { headers: osHeaders });
         const searchData = await searchRes.json();
 
-        // 5. Filter for best tracks (max 6)
+        // Full smart filtering (exactly like old code)
         let tracksToDownload = [];
         if (searchData.data && searchData.data.length > 0) {
             const sorted = searchData.data.sort((a, b) => {
@@ -238,13 +234,11 @@ app.post('/api/subs', async (req, res) => {
                 if (bT !== aT) return bT - aT;
                 return b.attributes.download_count - a.attributes.download_count;
             });
-
             const seenLanguages = new Set();
             for (const item of sorted) {
                 const attrs = item.attributes;
                 const lang = attrs.language;
                 if (seenLanguages.has(lang) || attrs.nb_cd > 1 || !attrs.files || !attrs.files.length) continue;
-
                 tracksToDownload.push({
                     title: attrs.language_name || lang.toUpperCase() || "Unknown",
                     language: lang || "en",
@@ -255,7 +249,7 @@ app.post('/api/subs', async (req, res) => {
             }
         }
 
-        // 6. Download links
+        // Download
         const finalTracks = [];
         for (const track of tracksToDownload) {
             const dlRes = await fetch(`${OS_BASE}/download`, {
@@ -273,29 +267,26 @@ app.post('/api/subs', async (req, res) => {
             }
         }
 
-        // 7. Encrypt the final results to send back to the app
         const encryptedResponse = CryptoJS.AES.encrypt(
-            JSON.stringify({ tracks: finalTracks }), 
+            JSON.stringify({ tracks: finalTracks }),
             SECRET_KEY
         ).toString();
 
         res.status(200).json({ data: encryptedResponse });
-
     } catch (error) {
         console.error("[SUBTITLE ERROR]:", error);
         res.status(500).json({ error: "Failed to process securely" });
     }
 });
 
-// --- DATABASE ROUTES ---
+// --- DATABASE ROUTES (add your original logic here) ---
 app.post('/api/save-progress', async (req, res) => {
     if (!supabase) return res.json({ success: false });
-    // ... logic same as your provided code
+    // ... paste your original logic
 });
-
 app.post('/api/add-to-watchlist', async (req, res) => {
     if (!supabase) return res.json({ success: false });
-    // ... logic same as your provided code
+    // ... paste your original logic
 });
 
 export default app;
