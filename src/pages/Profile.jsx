@@ -8,7 +8,6 @@ import {
 import { useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-// Updated path to resolve resolution errors
 import { supabase } from "../services/supabaseClient"; 
 
 const Profile = () => {
@@ -48,17 +47,33 @@ const Profile = () => {
 
       if (pError) throw pError;
 
-      // --- DEDUPLICATION LOGIC FOR TV SHOWS ---
-      // We only want to show the latest episode watched for any specific TV series
-      const seenSeries = new Set();
-      const dedupedData = (progressData || []).filter(item => {
-        if (item.type === 'movie') return true;
-        // Extract base ID (e.g., from tv_12345_s1_e1 to 12345)
-        const seriesId = item.media_id.split('_')[1];
-        if (seenSeries.has(seriesId)) return false;
-        seenSeries.add(seriesId);
-        return true;
+      // Group and Filter logic to ensure movies don't duplicate 
+      // and TV shows only show the highest watched season and episode.
+      const mediaMap = new Map();
+
+      (progressData || []).forEach(item => {
+        if (item.type === 'movie') {
+          if (!mediaMap.has(item.media_id)) {
+            mediaMap.set(item.media_id, item);
+          }
+        } else if (item.type === 'tv') {
+          const seriesId = item.media_id.split('_')[1];
+          if (!mediaMap.has(seriesId)) {
+            mediaMap.set(seriesId, item);
+          } else {
+            const existing = mediaMap.get(seriesId);
+            // Replace if the current item has a higher season, OR same season but higher episode
+            if (
+              item.season > existing.season || 
+              (item.season === existing.season && item.episode > existing.episode)
+            ) {
+              mediaMap.set(seriesId, item);
+            }
+          }
+        }
       });
+
+      const dedupedData = Array.from(mediaMap.values());
 
       const progressArray = await Promise.all(dedupedData.map(async (item) => {
         if (item.time <= 0) return null;
@@ -66,15 +81,18 @@ const Profile = () => {
         const parts = item.media_id.split('_');
         const baseId = parts.length > 1 ? parts[1] : parts[0];
         
-        let poster = item.poster;
-        if (!poster) poster = await getPosterFromId(baseId, item.type);
+        // Fetch details from TMDB to get the exact runtime for progress bar calculation
+        const details = await getMediaDetails(baseId, item.type);
+        const poster = item.poster || details.poster;
+        const duration = details.duration; 
         
         return { 
           ...item,
           id: baseId, 
           mediaType: item.type, 
           fullMediaId: item.id, 
-          poster 
+          poster,
+          duration 
         };
       }));
       setUserProgress(progressArray.filter(Boolean));
@@ -93,8 +111,8 @@ const Profile = () => {
           const cleanWId = wParts.length > 1 ? wParts[1] : wParts[0];
 
           if (!item.poster) {
-            const poster = await getPosterFromId(cleanWId, item.type || 'movie');
-            return { ...item, poster, id: cleanWId };
+            const details = await getMediaDetails(cleanWId, item.type || 'movie');
+            return { ...item, poster: details.poster, id: cleanWId };
           }
           return { ...item, id: cleanWId };
         }));
@@ -103,12 +121,15 @@ const Profile = () => {
     } catch (err) { console.error("Could not load user data from Supabase", err); }
   };
 
-  const getPosterFromId = async (id, type) => {
+  const getMediaDetails = async (id, type) => {
     try {
       const response = await fetch(`https://api.themoviedb.org/3/${type}/${id}?api_key=${TMDB_API_KEY}`);
       const data = await response.json();
-      return data.poster_path;
-    } catch (error) { return null; }
+      const runtimeMinutes = type === 'movie' ? (data.runtime || 120) : (data.episode_run_time?.[0] || 45);
+      return { poster: data.poster_path, duration: runtimeMinutes * 60 };
+    } catch (error) { 
+      return { poster: null, duration: 7200 }; 
+    }
   };
 
   const handleSidebarClick = (id) => {
@@ -254,9 +275,7 @@ const Profile = () => {
               {userProgress.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
                   {userProgress.map((item) => {
-                    // Calculate percentage for progress bar
                     const progressPercent = item.duration > 0 ? (item.time / item.duration) * 100 : 0;
-                    
                     return (
                       <div 
                         key={item.fullMediaId} 
@@ -284,7 +303,7 @@ const Profile = () => {
                         <div className="p-4 md:p-5">
                           <h4 className="font-bold text-xs md:text-sm uppercase truncate">{item.title}</h4>
                           <p className="text-[9px] md:text-[10px] text-zinc-500 font-bold uppercase mt-1">
-                            {item.mediaType === 'tv' ? `S${item.season} E${item.episode}` : 'Movie'} • {Math.floor(item.time / 60)}m left
+                            {item.mediaType === 'tv' ? `S${item.season} E${item.episode}` : 'Movie'} • {Math.floor(item.time / 60)}m Watched
                           </p>
                         </div>
                       </div>

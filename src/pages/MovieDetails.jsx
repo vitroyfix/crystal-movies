@@ -24,12 +24,12 @@ import useTrailer from "../hooks/useTrailer";
 import Hls from "hls.js";
 import { auth } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-// --- NEW: IMPORT SUPABASE ---
+import CryptoJS from "crypto-js";
 import { supabase } from "../../src/services/supabaseClient";
-// --- SCRAPER URL REMAINS ---
+
 const BACKEND_URL = "/api/scrape-stream";
-// --- NEW: PROXY URL ---
-const PROXY_URL = "/api/proxy";
+const SUBS_URL = "/api/subs";
+const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY;
 
 const MovieDetails = () => {
   const { id, mediaType: typeFromPath } = useParams();
@@ -49,14 +49,17 @@ const MovieDetails = () => {
   const [isCleaning, setIsCleaning] = useState(false);
   const [error, setError] = useState(null);
   const [audioTracks, setAudioTracks] = useState([]);
-  const [selectedAudio, setSelectedAudio] = useState("original"); // 'original' or 'english'
+  const [selectedAudio, setSelectedAudio] = useState("original");
   const [subtitleTracks, setSubtitleTracks] = useState([]);
   const [selectedSubtitle, setSelectedSubtitle] = useState(-1);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const progressInterval = useRef(null);
 
-  // --- AUTH & WATCHLIST ---
+  const encryptData = (payload) => {
+    return CryptoJS.AES.encrypt(JSON.stringify(payload), SECRET_KEY).toString();
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -70,24 +73,33 @@ const MovieDetails = () => {
 
   const fetchResumePoint = async (uid) => {
     try {
+      // Fetch all progress for this specific Movie or TV Show
+      const searchKey = resolvedMediaType === 'tv' ? `tv_${id}_%` : `movie_${id}`;
       const { data, error } = await supabase
         .from("user_progress")
         .select("*")
         .eq("user_id", uid)
-        .ilike("media_id", `%_${id}%`)
-        .order("last_updated", { ascending: false })
-        .limit(1);
+        .ilike("media_id", searchKey);
+
       if (error) throw error;
+
       if (data && data.length > 0) {
-        const latest = data[0];
         if (resolvedMediaType === "tv") {
+          // Find the episode with the HIGHEST season and episode number
+          const highestProgress = data.reduce((prev, current) => {
+            if (current.season > prev.season) return current;
+            if (current.season === prev.season && current.episode > prev.episode) return current;
+            return prev;
+          }, data[0]);
+
           setResumeData({
-            season: latest.season || 1,
-            episode: latest.episode || 1,
-            time: latest.time,
+            season: highestProgress.season,
+            episode: highestProgress.episode,
+            time: highestProgress.time,
           });
         } else {
-          setResumeData({ time: latest.time });
+          // For movies, just grab the time
+          setResumeData({ time: data[0].time });
         }
       }
     } catch (err) {
@@ -101,7 +113,7 @@ const MovieDetails = () => {
         .from("watchlist")
         .select("*")
         .eq("user_id", uid)
-        .eq("media_id", id)
+        .eq("media_id", id.toString())
         .maybeSingle(); 
       if (data) setIsInList(true);
       else setIsInList(false);
@@ -120,17 +132,17 @@ const MovieDetails = () => {
           .from("watchlist")
           .delete()
           .eq("user_id", currentUser.uid)
-          .eq("media_id", id);
+          .eq("media_id", id.toString());
         if (!error) setIsInList(false);
       } else {
         const { error } = await supabase.from("watchlist").insert([
           {
             user_id: currentUser.uid,
-            media_id: id,
+            media_id: id.toString(),
             title: movie?.title || movie?.name,
             poster: movie?.poster_path || movie?.backdrop_path,
             type: resolvedMediaType,
-            year: (movie?.release_date || movie?.first_air_date)?.split("-")[0],
+            year: (movie?.release_date || movie?.first_air_date)?.split("-")[0] || "N/A",
           },
         ]);
         if (!error) setIsInList(true);
@@ -142,25 +154,17 @@ const MovieDetails = () => {
     }
   };
 
-  // --- UPDATED PROGRESS SAVING FOR NEW SQL SCHEMA ---
   const saveProgress = async (currentTime) => {
     if (!currentUser || !movie || !videoRef.current) return;
+    // Every single episode generates a UNIQUE key to save time independently
+    const mediaKey = resolvedMediaType === "tv" ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}` : `movie_${id}`;
     
-    // Format media_id based on your SQL requirement
-    const mediaKey =
-      resolvedMediaType === "tv"
-        ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}`
-        : `movie_${id}`;
-
-    const duration = videoRef.current.duration || 0;
-
     try {
-      await supabase.from("user_progress").upsert(
+      const { error } = await supabase.from("user_progress").upsert(
         {
           user_id: currentUser.uid,
           media_id: mediaKey,
           time: currentTime,
-          duration: duration, // New column from SQL update
           title: movie?.title || movie?.name,
           poster: movie?.backdrop_path || movie?.poster_path,
           type: resolvedMediaType,
@@ -170,6 +174,7 @@ const MovieDetails = () => {
         },
         { onConflict: "user_id, media_id" },
       );
+      if (error) console.error("Supabase Save Error:", error.message);
     } catch (err) {
       console.error("Failed to save progress", err);
     }
@@ -177,10 +182,8 @@ const MovieDetails = () => {
 
   const getSavedProgress = async () => {
     if (!currentUser) return 0;
-    const mediaKey =
-      resolvedMediaType === "tv"
-        ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}`
-        : `movie_${id}`;
+    // Fetch time for the EXACT episode/movie currently loaded in the player
+    const mediaKey = resolvedMediaType === "tv" ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}` : `movie_${id}`;
     try {
       const { data, error } = await supabase
         .from("user_progress")
@@ -207,12 +210,21 @@ const MovieDetails = () => {
     setCleanUrl(null);
     setError(null);
     try {
-      const url = `${BACKEND_URL}?id=${mId}&type=${mType}${mType === "tv" ? `&s=${s}&e=${e}` : ""}`;
-      const response = await fetch(url);
+      const payload = { id: mId, type: mType, s, e };
+      const encrypted = encryptData(payload);
+      
+      const response = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: encrypted })
+      });
+
       if (!response.ok) throw new Error("Server error");
       const data = await response.json();
+      
       if (data.success && data.url) {
         setCleanUrl(data.url);
+        fetchSubtitles(mId, mType, s, e);
       } else {
         setError("Stream could not be found.");
       }
@@ -223,47 +235,35 @@ const MovieDetails = () => {
     }
   };
 
+  const fetchSubtitles = async (mId, mType, s, e) => {
+    try {
+      const payload = { imdbId: mId, type: mType, season: s, episode: e };
+      const encrypted = encryptData(payload);
+
+      const response = await fetch(SUBS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: encrypted })
+      });
+
+      const result = await response.json();
+      if (result.data) {
+        const bytes = CryptoJS.AES.decrypt(result.data, SECRET_KEY);
+        const decrypted = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+        setSubtitleTracks(decrypted.tracks || []);
+        const enIdx = (decrypted.tracks || []).findIndex(t => t.language === 'en');
+        if (enIdx !== -1) setSelectedSubtitle(enIdx);
+      }
+    } catch (err) {
+      console.error("Subtitle fetch failed", err);
+    }
+  };
+
   const handleAutoPlayNext = () => {
     if (resolvedMediaType === "tv") {
-      const nextEp = episodes.find(
-        (ep) => ep.episode_number === selectedEpisode + 1,
-      );
-      if (nextEp) {
-        handleEpisodeSelect(nextEp.episode_number);
-      } else {
-        setActiveStream(null);
-      }
-    }
-  };
-
-  const selectEnglishAudio = (tracks) => {
-    if (tracks.length > 1 && hlsRef.current) {
-      const englishIndex = tracks.findIndex(
-        (track) =>
-          (track.lang && track.lang.toLowerCase().includes("en")) ||
-          (track.name && track.name.toLowerCase().includes("en")) ||
-          (track.name && track.name.toLowerCase().includes("dub")),
-      );
-      if (englishIndex !== -1) {
-        hlsRef.current.audioTrack = englishIndex;
-      }
-    }
-  };
-
-  const selectEnglishSubtitle = () => {
-    if (hlsRef.current) {
-      const tracks = hlsRef.current.subtitleTracks;
-      if (tracks.length > 0) {
-        const englishIndex = tracks.findIndex(
-          (track) =>
-            (track.lang && track.lang.toLowerCase().includes("en")) ||
-            (track.name && track.name.toLowerCase().includes("en")),
-        );
-        if (englishIndex !== -1) {
-          hlsRef.current.subtitleTrack = englishIndex;
-          setSelectedSubtitle(englishIndex);
-        }
-      }
+      const nextEp = episodes.find((ep) => ep.episode_number === selectedEpisode + 1);
+      if (nextEp) handleEpisodeSelect(nextEp.episode_number);
+      else setActiveStream(null);
     }
   };
 
@@ -271,76 +271,43 @@ const MovieDetails = () => {
     if (cleanUrl && videoRef.current) {
       const video = videoRef.current;
       const initPlayer = async () => {
+        // Fetch the time specific to the episode currently loaded
         const savedTime = await getSavedProgress();
-        const startPlayback = () => {
-          if (savedTime > 0) {
-            const seek = () => {
-              video.currentTime = savedTime;
-              video.play().catch((e) => console.error("Playback failed", e));
-            };
-            if (video.readyState >= 1) {
-              seek();
-            } else {
-              video.addEventListener("loadedmetadata", seek, { once: true });
-            }
+        
+        const attemptSeekAndPlay = () => {
+          const playVideo = () => {
+            if (savedTime > 0) video.currentTime = savedTime;
+            video.play().catch(e => console.error("Playback prevented:", e));
+          };
+          if (video.readyState >= 1) {
+            playVideo();
           } else {
-            video.play().catch((e) => console.error("Playback failed", e));
+            video.addEventListener("loadedmetadata", playVideo, { once: true });
           }
         };
+
         if (Hls.isSupported()) {
           hlsRef.current = new Hls({
-            xhrSetup: (xhr) => {
-              xhr.withCredentials = false; 
-            },
-            manifestLoadingMaxRetry: 4,
-            levelLoadingMaxRetry: 4,
-            fragLoadingMaxRetry: 4,
+            xhrSetup: (xhr) => { xhr.withCredentials = false; },
             enableWorker: true,
           });
           hlsRef.current.loadSource(cleanUrl);
           hlsRef.current.attachMedia(video);
           hlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
             setAudioTracks(hlsRef.current.audioTracks);
-            selectEnglishAudio(hlsRef.current.audioTracks);
-            setSubtitleTracks(hlsRef.current.subtitleTracks);
-            selectEnglishSubtitle();
-            startPlayback();
-          });
-          hlsRef.current.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
-            setAudioTracks(hlsRef.current.audioTracks);
-            selectEnglishAudio(hlsRef.current.audioTracks);
-          });
-          hlsRef.current.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-            setSubtitleTracks(hlsRef.current.subtitleTracks);
-            selectEnglishSubtitle();
-          });
-          hlsRef.current.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  hlsRef.current.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  hlsRef.current.recoverMediaError();
-                  break;
-                default:
-                  setError("Streaming Error: Please try again or refresh.");
-                  hlsRef.current.destroy();
-                  break;
-              }
-            }
+            attemptSeekAndPlay();
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = cleanUrl;
-          video.onloadedmetadata = startPlayback;
+          video.addEventListener("loadedmetadata", attemptSeekAndPlay, { once: true });
         }
+        
         video.onpause = () => saveProgress(video.currentTime);
-        video.onended = () => {
-          saveProgress(0);
-          handleAutoPlayNext();
-        };
+        video.onended = () => { saveProgress(0); handleAutoPlayNext(); };
       };
+      
       initPlayer();
+      
       progressInterval.current = setInterval(() => {
         if (video && !video.paused && !video.ended) {
           saveProgress(video.currentTime);
@@ -348,13 +315,8 @@ const MovieDetails = () => {
       }, 10000);
     }
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      if (progressInterval.current) {
-        clearInterval(progressInterval.current);
-      }
+      if (hlsRef.current) hlsRef.current.destroy();
+      if (progressInterval.current) clearInterval(progressInterval.current);
     };
   }, [cleanUrl, selectedEpisode, selectedSeason]);
 
@@ -365,8 +327,7 @@ const MovieDetails = () => {
         const data = await fetchMovieDetails(id, resolvedMediaType);
         setMovie(data);
         if (resolvedMediaType === "tv" && data.seasons?.length) {
-          const firstSeason =
-            data.seasons.find((s) => s.season_number > 0) || data.seasons[0];
+          const firstSeason = data.seasons.find((s) => s.season_number > 0) || data.seasons[0];
           setSelectedSeason(firstSeason.season_number);
         }
       } catch (err) {
@@ -387,15 +348,7 @@ const MovieDetails = () => {
     const stars = [];
     const fullStars = Math.floor(rating / 2);
     for (let i = 0; i < 5; i++) {
-      stars.push(
-        <Star
-          key={i}
-          size={16}
-          className={
-            i < fullStars ? "fill-red-600 text-red-600" : "text-gray-600"
-          }
-        />,
-      );
+      stars.push(<Star key={i} size={16} className={i < fullStars ? "fill-red-600 text-red-600" : "text-gray-600"} />);
     }
     return stars;
   };
@@ -412,106 +365,53 @@ const MovieDetails = () => {
   const handleResumeClick = () => {
     if (isPlaying) stopTrailer();
     if (resolvedMediaType === "tv" && resumeData) {
+      // Jumps straight to the highest recorded season & episode
       setSelectedSeason(resumeData.season);
       setSelectedEpisode(resumeData.episode);
       setActiveStream(true);
       triggerBackendScrape(id, "tv", resumeData.season, resumeData.episode);
     } else {
       setActiveStream(true);
-      triggerBackendScrape(
-        id,
-        resolvedMediaType,
-        selectedSeason,
-        selectedEpisode,
-      );
+      triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode);
     }
   };
 
   const toggleAudio = () => {
     if (audioTracks.length > 1 && hlsRef.current) {
-      const currentIndex = hlsRef.current.audioTrack;
-      const originalIndex = 0; 
-      const englishIndex = audioTracks.findIndex(
-        (track) =>
-          (track.lang && track.lang.toLowerCase().includes("en")) ||
-          (track.name && track.name.toLowerCase().includes("en")) ||
-          (track.name && track.name.toLowerCase().includes("dub")),
-      );
-      if (englishIndex !== -1) {
-        const newIndex =
-          selectedAudio === "original" ? englishIndex : originalIndex;
-        hlsRef.current.audioTrack = newIndex;
-        hlsRef.current.nextLevel = hlsRef.current.currentLevel;
-        setSelectedAudio(selectedAudio === "original" ? "english" : "original");
+      const nextIndex = (hlsRef.current.audioTrack + 1) % audioTracks.length;
+      hlsRef.current.audioTrack = nextIndex;
+      setSelectedAudio(nextIndex === 0 ? "original" : "english");
+    }
+  };
+
+  const selectSubtitle = (index) => {
+    setSelectedSubtitle(index);
+    if (videoRef.current) {
+      const tracks = videoRef.current.textTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        tracks[i].mode = i === index ? "showing" : "disabled";
       }
     }
   };
 
-  const toggleSubtitle = () => {
-    if (subtitleTracks.length > 0 && hlsRef.current) {
-      let newIndex = selectedSubtitle + 1;
-      if (newIndex >= subtitleTracks.length) {
-        newIndex = -1;
-      }
-      hlsRef.current.subtitleTrack = newIndex;
-      setSelectedSubtitle(newIndex);
-    }
-  };
-
-  if (loading)
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <RefreshCw className="animate-spin text-white" size={40} />
-      </div>
-    );
+  if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><RefreshCw className="animate-spin text-white" size={40} /></div>;
   if (!movie) return null;
 
-  const {
-    title,
-    name,
-    badgeYear,
-    rating,
-    runtime,
-    plot,
-    backdrop_path,
-    poster_path,
-    director,
-    writer,
-    cast,
-    genre,
-    language,
-    votes,
-    release_date,
-    first_air_date,
-  } = movie;
+  const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, cast, genre, language, votes, release_date, first_air_date } = movie;
   const displayTitle = title || name;
-  const displayImage = backdrop_path
-    ? `https://image.tmdb.org/t/p/original${backdrop_path}`
-    : `https://image.tmdb.org/t/p/original${poster_path}`;
+  const displayImage = backdrop_path ? `https://image.tmdb.org/t/p/original${backdrop_path}` : `https://image.tmdb.org/t/p/original${poster_path}`;
 
   return (
     <div className="relative min-h-screen bg-black text-white selection:bg-white selection:text-black overflow-x-hidden font-sans">
-      <button
-        onClick={() => navigate(-1)}
-        className="fixed top-6 left-6 md:top-8 md:left-20 z-[60] flex items-center gap-2 px-4 py-2 md:px-5 md:py-2.5 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full hover:bg-white/10 hover:border-white/30 transition-all group"
-      >
-        <ArrowLeft
-          size={16}
-          className="md:size-[18px] group-hover:-translate-x-1 transition-transform"
-        />
-        <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">
-          Go Back
-        </span>
+      <button onClick={() => navigate(-1)} className="fixed top-6 left-6 md:top-8 md:left-20 z-[60] flex items-center gap-2 px-4 py-2 md:px-5 md:py-2.5 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full hover:bg-white/10 hover:border-white/30 transition-all group">
+        <ArrowLeft size={16} className="md:size-[18px] group-hover:-translate-x-1 transition-transform" />
+        <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">Go Back</span>
       </button>
 
       <div className="fixed inset-0 z-0 w-full h-full overflow-hidden">
         {displayImage && (
           <div className="relative w-full h-full">
-            <img
-              src={displayImage}
-              alt={displayTitle}
-              className="w-full h-full object-cover object-center opacity-70"
-            />
+            <img src={displayImage} alt={displayTitle} className="w-full h-full object-cover object-center opacity-70" />
             <div className="absolute inset-0 bg-gradient-to-r from-black via-black/60 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
           </div>
@@ -521,178 +421,79 @@ const MovieDetails = () => {
       <div className="relative z-10 flex flex-col min-h-screen">
         <div className="flex-grow flex flex-col justify-center px-6 md:px-20 py-24 md:py-12 min-h-screen">
           <div className="max-w-4xl space-y-6">
-            <h1 className="text-3xl sm:text-5xl md:text-7xl lg:text-8xl font-serif font-light tracking-widest uppercase text-white leading-tight md:leading-none">
-              {displayTitle}
-            </h1>
+            <h1 className="text-3xl sm:text-5xl md:text-7xl lg:text-8xl font-serif font-light tracking-widest uppercase text-white leading-tight md:leading-none">{displayTitle}</h1>
             <div className="flex items-center gap-4">
               <div className="bg-red-600/20 border border-red-600 px-3 py-1 rounded text-[9px] md:text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-                <ShieldCheck size={14} />
-                Protected
+                <ShieldCheck size={14} /> Protected
               </div>
             </div>
             <div className="space-y-4 text-white">
               <div className="flex flex-wrap items-center gap-3 md:gap-4 text-xs md:text-sm tracking-widest opacity-80">
-                <span>
-                  {badgeYear || (release_date || first_air_date)?.split("-")[0]}
-                </span>
-                <span className="bg-red-600 px-1 text-[10px] rounded-sm font-bold text-white uppercase">
-                  12+
-                </span>
+                <span>{badgeYear || (release_date || first_air_date)?.split("-")[0]}</span>
+                <span className="bg-red-600 px-1 text-[10px] rounded-sm font-bold text-white uppercase">12+</span>
                 <span>{runtime || "TV Series"}</span>
                 <span className="hidden xs:inline">|</span>
-                <span className="uppercase">
-                  {genre || movie.genres?.map((g) => g.name).join(", ")}
-                </span>
+                <span className="uppercase">{genre || movie.genres?.map((g) => g.name).join(", ")}</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex gap-1">{renderStars(rating)}</div>
-                <span className="text-[10px] md:text-xs font-sans font-bold ml-1">
-                  {rating} / 10 ({votes} votes)
-                </span>
+                <span className="text-[10px] md:text-xs font-sans font-bold ml-1">{rating} / 10 ({votes} votes)</span>
               </div>
             </div>
-            <p className="text-sm md:text-base leading-relaxed text-white max-w-xl drop-shadow-md">
-              {plot}
-            </p>
+            <p className="text-sm md:text-base leading-relaxed text-white max-w-xl drop-shadow-md">{plot}</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 pt-4 border-t border-white/10 max-w-3xl">
               <div className="space-y-1">
-                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
-                  <Calendar size={12} /> Release
-                </p>
-                <p className="text-xs font-bold">
-                  {badgeYear || first_air_date || "N/A"}
-                </p>
+                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2"><Calendar size={12} /> Release</p>
+                <p className="text-xs font-bold">{badgeYear || first_air_date || "N/A"}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
-                  <Globe size={12} /> Language
-                </p>
-                <p className="text-xs font-bold uppercase">
-                  {language || "English"}
-                </p>
+                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2"><Globe size={12} /> Language</p>
+                <p className="text-xs font-bold uppercase">{language || "English"}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
-                  <User size={12} />{" "}
-                  {resolvedMediaType === "tv" ? "Created" : "Director"}
-                </p>
-                <p className="text-xs font-bold truncate">
-                  {director || "N/A"}
-                </p>
+                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2"><User size={12} /> {resolvedMediaType === "tv" ? "Created" : "Director"}</p>
+                <p className="text-xs font-bold truncate">{director || "N/A"}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
-                  <FileText size={12} /> Writer
-                </p>
+                <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2"><FileText size={12} /> Writer</p>
                 <p className="text-xs font-bold truncate">{writer || "N/A"}</p>
               </div>
             </div>
-            <div className="pt-4 max-w-2xl">
-              <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 mb-2 flex items-center gap-2">
-                <Users size={12} /> Top Cast
-              </p>
-              <p className="text-[11px] md:text-xs font-medium leading-relaxed opacity-90">
-                {cast || "N/A"}
-              </p>
-            </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-6 uppercase">
-              <button
-                onClick={handleResumeClick}
-                className="w-full sm:w-auto flex items-center justify-center gap-3 bg-red-600 text-white px-6 md:px-10 py-3.5 md:py-3 rounded-sm hover:bg-red-700 transition-all font-black tracking-widest text-xs md:text-sm"
-              >
+              <button onClick={handleResumeClick} className="w-full sm:w-auto flex items-center justify-center gap-3 bg-red-600 text-white px-6 md:px-10 py-3.5 md:py-3 rounded-sm hover:bg-red-700 transition-all font-black tracking-widest text-xs md:text-sm">
                 <Play size={18} fill="white" />
-                {resumeData
-                  ? resolvedMediaType === "tv"
-                    ? `Resume S${resumeData.season}:E${resumeData.episode}`
-                    : "Resume Movie"
-                  : "Start Stream"}
+                {resumeData ? (resolvedMediaType === "tv" ? `Resume S${resumeData.season}:E${resumeData.episode}` : "Resume Movie") : "Start Stream"}
               </button>
-              <button
-                onClick={handleWatchlistToggle}
-                disabled={isSavingList}
-                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 md:px-8 py-3.5 md:py-3 rounded-sm transition-all font-black backdrop-blur-md text-xs md:text-sm border ${isInList ? "bg-white text-black border-white" : "bg-black/40 text-white border-white/20 hover:bg-white/10"}`}
-              >
-                {isSavingList ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : isInList ? (
-                  <Check size={18} />
-                ) : (
-                  <Plus size={18} />
-                )}
+              <button onClick={handleWatchlistToggle} disabled={isSavingList} className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 md:px-8 py-3.5 md:py-3 rounded-sm transition-all font-black backdrop-blur-md text-xs md:text-sm border ${isInList ? "bg-white text-black border-white" : "bg-black/40 text-white border-white/20 hover:bg-white/10"}`}>
+                {isSavingList ? <Loader2 size={18} className="animate-spin" /> : isInList ? <Check size={18} /> : <Plus size={18} />}
                 {isSavingList ? "Saving..." : isInList ? "Added" : "My List"}
               </button>
             </div>
-            <button
-              onClick={() => {
-                setActiveStream(null);
-                playTrailer();
-              }}
-              className="flex items-center gap-3 md:gap-4 pt-6 md:pt-8 text-white hover:text-red-500 transition-all font-bold uppercase tracking-[0.2em] group text-[10px] md:text-sm"
-            >
+            <button onClick={() => { setActiveStream(null); playTrailer(); }} className="flex items-center gap-3 md:gap-4 pt-6 md:pt-8 text-white hover:text-red-500 transition-all font-bold uppercase tracking-[0.2em] group text-[10px] md:text-sm">
               <div className="p-2 md:p-3 border-2 border-white group-hover:border-red-500 rounded-full transition-all">
-                <Play
-                  size={12}
-                  className="md:size-[14px]"
-                  fill="currentColor"
-                />
-              </div>{" "}
-              Watch Trailer
+                <Play size={12} className="md:size-[14px]" fill="currentColor" />
+              </div> Watch Trailer
             </button>
           </div>
         </div>
         {resolvedMediaType === "tv" && movie.seasons && (
           <div className="relative py-12 md:py-24 px-6 md:px-20 bg-gradient-to-t from-black via-black/80 to-transparent">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 md:mb-10 text-white">
-              <h2 className="text-xl md:text-3xl font-serif uppercase tracking-widest border-l-4 border-red-600 pl-4">
-                Episodes
-              </h2>
-              <select
-                value={selectedSeason}
-                onChange={(e) => {
-                  setSelectedSeason(Number(e.target.value));
-                  setSelectedEpisode(1);
-                }}
-                className="w-full sm:w-auto bg-zinc-900 border border-white/10 text-[10px] md:text-xs px-4 py-3 md:py-2 rounded uppercase tracking-widest text-white outline-none cursor-pointer"
-              >
-                {movie.seasons.map((s) => (
-                  <option key={s.id} value={s.season_number}>
-                    Season {s.season_number}
-                  </option>
-                ))}
+              <h2 className="text-xl md:text-3xl font-serif uppercase tracking-widest border-l-4 border-red-600 pl-4">Episodes</h2>
+              <select value={selectedSeason} onChange={(e) => { setSelectedSeason(Number(e.target.value)); setSelectedEpisode(1); }} className="w-full sm:w-auto bg-zinc-900 border border-white/10 text-[10px] md:text-xs px-4 py-3 md:py-2 rounded uppercase tracking-widest text-white outline-none cursor-pointer">
+                {movie.seasons.map((s) => (<option key={s.id} value={s.season_number}>Season {s.season_number}</option>))}
               </select>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
               {episodes.map((ep) => (
-                <div
-                  key={`${selectedSeason}-${ep.episode_number}`}
-                  onClick={() => handleEpisodeSelect(ep.episode_number)}
-                  className={`group cursor-pointer transition-all duration-300 ${selectedEpisode === ep.episode_number ? "scale-[1.02]" : "opacity-70 hover:opacity-100"}`}
-                >
-                  <div
-                    className={`relative aspect-video rounded-lg overflow-hidden border-2 ${selectedEpisode === ep.episode_number ? "border-red-600 shadow-lg shadow-red-600/20" : "border-white/10"}`}
-                  >
-                    <img
-                      src={
-                        ep.still_path
-                          ? `https://image.tmdb.org/t/p/w500${ep.still_path}`
-                          : displayImage
-                      }
-                      alt={ep.name}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="p-3 bg-red-600 rounded-full shadow-lg">
-                        <Play size={20} fill="white" />
-                      </div>
-                    </div>
+                <div key={`${selectedSeason}-${ep.episode_number}`} onClick={() => handleEpisodeSelect(ep.episode_number)} className={`group cursor-pointer transition-all duration-300 ${selectedEpisode === ep.episode_number ? "scale-[1.02]" : "opacity-70 hover:opacity-100"}`}>
+                  <div className={`relative aspect-video rounded-lg overflow-hidden border-2 ${selectedEpisode === ep.episode_number ? "border-red-600 shadow-lg shadow-red-600/20" : "border-white/10"}`}>
+                    <img src={ep.still_path ? `https://image.tmdb.org/t/p/w500${ep.still_path}` : displayImage} alt={ep.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 md:opacity-0 group-hover:opacity-100 transition-opacity"><div className="p-3 bg-red-600 rounded-full shadow-lg"><Play size={20} fill="white" /></div></div>
                   </div>
                   <div className="mt-3 md:mt-4 space-y-1">
-                    <h3 className="text-xs md:text-sm font-bold uppercase tracking-widest truncate">
-                      {ep.name}
-                    </h3>
-                    <p className="text-[9px] md:text-[10px] leading-relaxed line-clamp-2 opacity-60">
-                      {ep.overview}
-                    </p>
+                    <h3 className="text-xs md:text-sm font-bold uppercase tracking-widest truncate">{ep.name}</h3>
+                    <p className="text-[9px] md:text-[10px] leading-relaxed line-clamp-2 opacity-60">{ep.overview}</p>
                   </div>
                 </div>
               ))}
@@ -705,89 +506,56 @@ const MovieDetails = () => {
         <div className="fixed inset-0 z-[100] bg-black flex flex-col">
           <div className="absolute top-0 w-full p-4 md:p-8 flex justify-between items-center z-[110] text-white pointer-events-none">
             <h2 className="text-[9px] md:text-xs uppercase tracking-widest font-bold text-red-600 bg-black/50 px-4 md:px-6 py-2 rounded-full pointer-events-auto truncate max-w-[70%]">
-              {displayTitle}{" "}
-              {activeStream &&
-                resolvedMediaType === "tv" &&
-                `• S${selectedSeason}:E${selectedEpisode}`}
+              {displayTitle} {activeStream && resolvedMediaType === "tv" && `• S${selectedSeason}:E${selectedEpisode}`}
             </h2>
-            <button
-              onClick={() => {
-                if (videoRef.current)
-                  saveProgress(videoRef.current.currentTime);
-                setActiveStream(null);
-                stopTrailer();
-                setCleanUrl(null);
-              }}
-              className="text-white hover:text-red-500 transition-all bg-black/50 p-2 md:p-3 rounded-full pointer-events-auto"
-            >
-              <X size={20} className="md:size-[24px]" />
-            </button>
+            <button onClick={() => { if (videoRef.current) saveProgress(videoRef.current.currentTime); setActiveStream(null); stopTrailer(); setCleanUrl(null); }} className="text-white hover:text-red-500 transition-all bg-black/50 p-2 md:p-3 rounded-full pointer-events-auto"><X size={20} /></button>
           </div>
           <div className="flex-grow w-full relative">
             {isCleaning ? (
               <div className="absolute inset-0 z-[115] bg-black flex flex-col items-center justify-center">
                 <Loader2 className="animate-spin text-red-600" size={40} />
-                <p className="mt-4 text-[10px] md:text-xs font-black tracking-widest uppercase animate-pulse">
-                  loading...
-                </p>
+                <p className="mt-4 text-[10px] md:text-xs font-black tracking-widest uppercase animate-pulse">loading...</p>
               </div>
             ) : error ? (
               <div className="absolute inset-0 z-[115] bg-black flex flex-col items-center justify-center text-center px-6">
                 <AlertCircle className="text-red-600 mb-4" size={40} />
-                <p className="text-[10px] md:text-xs font-black tracking-widest uppercase">
-                  {error}
-                </p>
-                <button
-                  onClick={() =>
-                    triggerBackendScrape(
-                      id,
-                      resolvedMediaType,
-                      selectedSeason,
-                      selectedEpisode,
-                    )
-                  }
-                  className="mt-6 border border-white/20 px-6 py-2 text-[10px] uppercase font-bold hover:bg-white/10 transition-all"
-                >
-                  Retry Connection
-                </button>
+                <p className="text-[10px] md:text-xs font-black tracking-widest uppercase">{error}</p>
+                <button onClick={() => triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode)} className="mt-6 border border-white/20 px-6 py-2 text-[10px] uppercase font-bold hover:bg-white/10 transition-all">Retry Connection</button>
               </div>
             ) : cleanUrl ? (
               <div className="relative w-full h-full">
-                <video
-                  ref={videoRef}
-                  controls
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-contain bg-black"
-                />
-                <div className="absolute bottom-4 right-4 flex gap-4">
+                <video ref={videoRef} controls autoPlay playsInline crossOrigin="anonymous" className="w-full h-full object-contain bg-black">
+                  {subtitleTracks.map((track, idx) => (
+                    <track key={idx} kind="subtitles" src={track.uri} label={track.title} srcLang={track.language} default={idx === selectedSubtitle} />
+                  ))}
+                </video>
+                <div className="absolute bottom-16 right-4 flex flex-wrap gap-2 z-[120] pointer-events-auto">
                   {audioTracks.length > 1 && (
-                    <button
-                      onClick={toggleAudio}
-                      className="bg-black/70 text-white px-4 py-2 rounded text-sm"
-                    >
-                      {selectedAudio === "original"
-                        ? "Switch to English"
-                        : "Switch to Original"}
+                    <button onClick={toggleAudio} className="bg-black/70 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded text-[10px] uppercase font-bold hover:bg-red-600 transition-all">
+                      Audio: {selectedAudio}
                     </button>
                   )}
                   {subtitleTracks.length > 0 && (
-                    <button
-                      onClick={toggleSubtitle}
-                      className="bg-black/70 text-white px-4 py-2 rounded text-sm"
-                    >
-                      CC {selectedSubtitle === -1 ? "Off" : "On"}
-                    </button>
+                    <div className="relative group">
+                      <button className="bg-black/70 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded text-[10px] uppercase font-bold hover:bg-white/10 transition-all">
+                        Subtitles ({selectedSubtitle === -1 ? 'Off' : subtitleTracks[selectedSubtitle]?.title})
+                      </button>
+                      <div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col bg-black/90 backdrop-blur-xl border border-white/10 rounded overflow-hidden min-w-[160px] shadow-2xl">
+                        <button onClick={() => selectSubtitle(-1)} className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${selectedSubtitle === -1 ? 'bg-red-600/20 text-red-500 font-black' : 'text-white/70'}`}>Off</button>
+                        <div className="max-h-48 overflow-y-auto scrollbar-hide">
+                          {subtitleTracks.map((t, i) => (
+                            <button key={i} onClick={() => selectSubtitle(i)} className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${selectedSubtitle === i ? 'bg-red-600/20 text-red-500 font-black' : 'text-white/70'}`}>
+                              {t.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
             ) : isPlaying ? (
-              <iframe
-                src={trailerUrl}
-                className="w-full h-full border-none"
-                allowFullScreen
-                title="Trailer"
-              />
+              <iframe src={trailerUrl} className="w-full h-full border-none" allowFullScreen title="Trailer" />
             ) : null}
           </div>
         </div>
