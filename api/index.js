@@ -14,7 +14,7 @@ dotenv.config();
 const app = express();
 
 // Use the same key across your entire app (Mobile .env and Vercel Dashboard)
-const SECRET_KEY = process.env.ENCRYPTION_KEY || "a/tEB7GJe7FOH5m9xhOYEH2z18lJAlLpQVHsYmhIQnA=";
+const SECRET_KEY = process.env.ENCRYPTION_KEY;
 
 app.use(cors({
   origin: '*',
