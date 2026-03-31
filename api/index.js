@@ -6,12 +6,15 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
-import { URL } from 'url';
+import { URL, fileURLToPath } from 'url';
 import CryptoJS from 'crypto-js';
+import path from 'path';
 
 dotenv.config();
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Use the same key across your entire app (Mobile .env and Vercel Dashboard)
 const SECRET_KEY = process.env.ENCRYPTION_KEY;
@@ -35,7 +38,7 @@ if (!supabase) {
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
-// --- 1. PROXY ROUTE (clean version from new code) ---
+// --- 1. PROXY ROUTE ---
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
@@ -85,7 +88,7 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (new + old robustness) ---
+// --- 2. SECURE ENCRYPTED SCRAPER ROUTE ---
 app.post('/api/scrape-stream', async (req, res) => {
     const encryptedPayload = req.body.data;
     if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data" });
@@ -117,16 +120,19 @@ app.post('/api/scrape-stream', async (req, res) => {
         }
 
         if (!videoUrl) {
-            const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
+            // Check if we are running locally or on a cloud provider
+            const isLocal = process.env.NODE_ENV === 'development' || !process.env.K_SERVICE;
+            
             let browser = await puppeteer.launch({
                 args: isLocal
-                    ? ['--no-sandbox', '--disable-setuid-sandbox']
-                    : [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
+                    ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                    : [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
                 executablePath: isLocal
-                    ? '/usr/bin/google-chrome'
+                    ? '/usr/bin/google-chrome' // Common path for Linux Mint/Ubuntu
                     : await chromium.executablePath(),
                 headless: isLocal ? true : chromium.headless,
             });
+
             const page = await browser.newPage();
             await page.setRequestInterception(true);
             page.on('request', (request) => {
@@ -175,7 +181,7 @@ app.post('/api/scrape-stream', async (req, res) => {
     }
 });
 
-// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE (full old logic restored) ---
+// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE ---
 app.post('/api/subs', async (req, res) => {
     const OS_BASE = "https://api.opensubtitles.com/api/v1";
     try {
@@ -195,7 +201,6 @@ app.post('/api/subs', async (req, res) => {
             "User-Agent": process.env.OPENSUBTITLES_USER_AGENT
         };
 
-        // Login
         const loginRes = await fetch(`${OS_BASE}/login`, {
             method: "POST",
             headers: osHeaders,
@@ -207,7 +212,6 @@ app.post('/api/subs', async (req, res) => {
         const loginData = await loginRes.json();
         if (loginData.token) osHeaders["Authorization"] = `Bearer ${loginData.token}`;
 
-        // Search
         const params = new URLSearchParams({
             tmdb_id: imdbId,
             languages: "en",
@@ -225,7 +229,6 @@ app.post('/api/subs', async (req, res) => {
         const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, { headers: osHeaders });
         const searchData = await searchRes.json();
 
-        // Full smart filtering (exactly like old code)
         let tracksToDownload = [];
         if (searchData.data && searchData.data.length > 0) {
             const sorted = searchData.data.sort((a, b) => {
@@ -249,7 +252,6 @@ app.post('/api/subs', async (req, res) => {
             }
         }
 
-        // Download
         const finalTracks = [];
         for (const track of tracksToDownload) {
             const dlRes = await fetch(`${OS_BASE}/download`, {
@@ -279,14 +281,32 @@ app.post('/api/subs', async (req, res) => {
     }
 });
 
-// --- DATABASE ROUTES (add your original logic here) ---
+// --- 4. DATABASE ROUTES (Placeholders for your logic) ---
 app.post('/api/save-progress', async (req, res) => {
     if (!supabase) return res.json({ success: false });
-    // ... paste your original logic
+    // logic...
 });
 app.post('/api/add-to-watchlist', async (req, res) => {
     if (!supabase) return res.json({ success: false });
-    // ... paste your original logic
+    // logic...
+});
+
+// --- 5. THE UNIFIED PIECE: SERVE FRONTEND + LISTEN ---
+
+// Serve Vite's static "dist" folder
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Handle Single Page Application (SPA) Routing
+// Using '/*' ensures compatibility with Express 5 routing
+app.get('/*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
+// Bind to Port 8080 (Required for Google Cloud Run)
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server listening on port ${PORT}`);
+    console.log(`📡 Frontend: http://localhost:${PORT}`);
 });
 
 export default app;
