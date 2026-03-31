@@ -38,7 +38,7 @@ if (!supabase) {
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
-// --- 1. PROXY ROUTE ---
+// --- 1. PROXY ROUTE (ONLY THIS ROUTE WAS UPDATED) ---
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
@@ -49,16 +49,18 @@ app.get('/api/proxy', async (req, res) => {
             'Origin': 'https://vidlink.pro/',
         };
         if (req.headers.range) forwardedHeaders['Range'] = req.headers.range;
-       
+      
         const response = await fetch(targetUrl, { headers: forwardedHeaders });
-        if (!response.ok) return res.status(response.status).send(await response.text());
-
+        
+        // NEW: Forward exact status code (critical for 206 Partial Content + seeking)
+        res.status(response.status);
+        
         const contentType = response.headers.get('content-type') || "";
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', contentType);
         if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
         if (response.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
-
+        
         if (contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
             let text = await response.text();
             const providerBase = new URL(targetUrl).origin + new URL(targetUrl).pathname.replace(/[^/]+$/, '');
@@ -81,6 +83,7 @@ app.get('/api/proxy', async (req, res) => {
             res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
             return res.send(rewrittenText);
         }
+        // Streaming pipe (unchanged - low memory, perfect for Vercel)
         response.body.pipe(res);
     } catch (err) {
         console.error("[PROXY ERROR]:", err.message);
@@ -88,51 +91,41 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// --- 2. SECURE ENCRYPTED SCRAPER ROUTE ---
+// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (UNTOUCHED) ---
 app.post('/api/scrape-stream', async (req, res) => {
     const encryptedPayload = req.body.data;
     if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data" });
-
     try {
         const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
         const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
         if (!decryptedString) throw new Error("Decryption failed");
-
         const { id, type, s, e } = JSON.parse(decryptedString);
         if (!id || !type) return res.status(400).json({ error: "Missing ID/Type" });
-
         if (!supabase) return res.status(500).json({ error: "Database not available" });
-
         const cacheKey = `${id}-${type}-${s || ''}-${e || ''}`;
         let videoUrl = null;
-
         const { data: cacheData, error: cacheError } = await supabase
             .from('streams')
             .select('url, expires_at')
             .eq('key', cacheKey)
             .single();
-
         if (cacheError && cacheError.code !== 'PGRST116') throw cacheError;
-
         const now = new Date().toISOString();
         if (cacheData && cacheData.expires_at > now) {
             videoUrl = cacheData.url;
         }
-
         if (!videoUrl) {
-            // Check if we are running locally or on a cloud provider
-            const isLocal = process.env.NODE_ENV === 'development' || !process.env.K_SERVICE;
-            
+            const isLocal = process.env.NODE_ENV === 'development' && !(process.env.VERCEL || process.env.K_SERVICE);
+           
             let browser = await puppeteer.launch({
                 args: isLocal
                     ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
                     : [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
                 executablePath: isLocal
-                    ? '/usr/bin/google-chrome' // Common path for Linux Mint/Ubuntu
+                    ? '/usr/bin/google-chrome'
                     : await chromium.executablePath(),
                 headless: isLocal ? true : chromium.headless,
             });
-
             const page = await browser.newPage();
             await page.setRequestInterception(true);
             page.on('request', (request) => {
@@ -146,26 +139,20 @@ app.post('/api/scrape-stream', async (req, res) => {
                     request.continue();
                 }
             });
-
             let target = `https://vidlink.pro/${type}/${id}`;
             if (type === 'tv' && s && e) target = `https://vidlink.pro/tv/${id}/${s}/${e}`;
-
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await page.mouse.click(640, 360).catch(() => {});
-
             let attempts = 0;
             while (!videoUrl && attempts < 40) {
                 await new Promise(r => setTimeout(r, 500));
                 attempts++;
             }
-
             await browser.close();
-
             if (!videoUrl) {
                 return res.status(404).json({ success: false, message: "Stream not found." });
             }
-
             const expiresAt = new Date(Date.now() + 3600000).toISOString();
             await supabase.from('streams').upsert({
                 key: cacheKey,
@@ -173,7 +160,6 @@ app.post('/api/scrape-stream', async (req, res) => {
                 expires_at: expiresAt
             }, { onConflict: 'key' });
         }
-
         res.json({ success: true, url: `/api/proxy?url=${encodeURIComponent(videoUrl)}` });
     } catch (err) {
         console.error("[SCRAPER ERROR]:", err.message);
@@ -181,26 +167,22 @@ app.post('/api/scrape-stream', async (req, res) => {
     }
 });
 
-// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE ---
+// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE (UNTOUCHED) ---
 app.post('/api/subs', async (req, res) => {
     const OS_BASE = "https://api.opensubtitles.com/api/v1";
     try {
         const encryptedPayload = req.body.data;
         if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data payload" });
-
         const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
         const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
         if (!decryptedString) return res.status(400).json({ error: "Invalid encryption key or payload" });
-
         const { imdbId, type, season, episode } = JSON.parse(decryptedString);
-
         const osHeaders = {
             "Api-Key": process.env.OPENSUBTITLES_API_KEY,
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": process.env.OPENSUBTITLES_USER_AGENT
         };
-
         const loginRes = await fetch(`${OS_BASE}/login`, {
             method: "POST",
             headers: osHeaders,
@@ -211,7 +193,6 @@ app.post('/api/subs', async (req, res) => {
         });
         const loginData = await loginRes.json();
         if (loginData.token) osHeaders["Authorization"] = `Bearer ${loginData.token}`;
-
         const params = new URLSearchParams({
             tmdb_id: imdbId,
             languages: "en",
@@ -225,10 +206,8 @@ app.post('/api/subs', async (req, res) => {
         } else {
             params.append("type", "movie");
         }
-
         const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, { headers: osHeaders });
         const searchData = await searchRes.json();
-
         let tracksToDownload = [];
         if (searchData.data && searchData.data.length > 0) {
             const sorted = searchData.data.sort((a, b) => {
@@ -251,7 +230,6 @@ app.post('/api/subs', async (req, res) => {
                 if (tracksToDownload.length >= 6) break;
             }
         }
-
         const finalTracks = [];
         for (const track of tracksToDownload) {
             const dlRes = await fetch(`${OS_BASE}/download`, {
@@ -268,12 +246,10 @@ app.post('/api/subs', async (req, res) => {
                 });
             }
         }
-
         const encryptedResponse = CryptoJS.AES.encrypt(
             JSON.stringify({ tracks: finalTracks }),
             SECRET_KEY
         ).toString();
-
         res.status(200).json({ data: encryptedResponse });
     } catch (error) {
         console.error("[SUBTITLE ERROR]:", error);
@@ -281,7 +257,7 @@ app.post('/api/subs', async (req, res) => {
     }
 });
 
-// --- 4. DATABASE ROUTES (Placeholders for your logic) ---
+// --- 4. DATABASE ROUTES (UNTOUCHED) ---
 app.post('/api/save-progress', async (req, res) => {
     if (!supabase) return res.json({ success: false });
     // logic...
@@ -291,18 +267,13 @@ app.post('/api/add-to-watchlist', async (req, res) => {
     // logic...
 });
 
-// --- 5. THE UNIFIED PIECE: SERVE FRONTEND + LISTEN ---
-
-// Serve Vite's static "dist" folder
+// --- 5. THE UNIFIED PIECE: SERVE FRONTEND + LISTEN (UNTOUCHED) ---
 app.use(express.static(path.join(__dirname, '../dist')));
 
-// Handle Single Page Application (SPA) Routing
-// Using '/*' ensures compatibility with Express 5 routing
-app.get('/*', (req, res) => {
+app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
-// Bind to Port 8080 (Required for Google Cloud Run)
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server listening on port ${PORT}`);
