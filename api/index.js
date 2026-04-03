@@ -37,31 +37,68 @@ if (!supabase) {
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
-// --- PERF: In-memory OpenSubtitles token cache ---
-// Prevents a full login round-trip on every /api/subs request.
-// Token is reused until it expires (55-minute TTL matches OS token lifetime).
+// --- PERF: In-memory OpenSubtitles token cache with a pending-promise lock. ---
+// Without the lock, two simultaneous cold requests both see token: null and race
+// to fire login requests in parallel, burning through the OS rate limit.
 let _osTokenCache = { token: null, expiresAt: 0 };
+let _osTokenPending = null;
 
 async function getOsToken(osHeaders) {
     const now = Date.now();
     if (_osTokenCache.token && now < _osTokenCache.expiresAt) {
         return _osTokenCache.token;
     }
+    // FIX: If a login request is already in-flight, return the same promise
+    // instead of firing a second one. All concurrent callers share one login call.
+    if (_osTokenPending) {
+        return _osTokenPending;
+    }
     const OS_BASE = "https://api.opensubtitles.com/api/v1";
-    const loginRes = await fetch(`${OS_BASE}/login`, {
+    _osTokenPending = fetch(`${OS_BASE}/login`, {
         method: "POST",
         headers: osHeaders,
         body: JSON.stringify({
             username: process.env.OPENSUBTITLES_USERNAME,
             password: process.env.OPENSUBTITLES_PASSWORD
         })
+    })
+    .then(res => res.json())
+    .then(loginData => {
+        if (loginData.token) {
+            _osTokenCache.token = loginData.token;
+            _osTokenCache.expiresAt = Date.now() + 55 * 60 * 1000; // 55 minutes
+        }
+        return loginData.token || null;
+    })
+    .finally(() => {
+        // Always clear the lock so future calls after expiry can re-authenticate.
+        _osTokenPending = null;
     });
-    const loginData = await loginRes.json();
-    if (loginData.token) {
-        _osTokenCache.token = loginData.token;
-        _osTokenCache.expiresAt = now + 55 * 60 * 1000; // 55 minutes
+    return _osTokenPending;
+}
+
+// --- PERF: fetchWithRetry helper ---
+// Retries once on 5xx upstream errors with a 300ms back-off to smooth transient
+// upstream latency spikes. Explicitly does NOT retry on AbortError (our own
+// timeout) — doing so would double the wait time before responding with a 504.
+async function fetchWithRetry(url, options, retries = 1) {
+    try {
+        const response = await fetch(url, options);
+        if (response.status >= 500 && retries > 0) {
+            console.warn(`[PROXY RETRY]: Upstream returned ${response.status}, retrying in 300ms.`);
+            await new Promise(r => setTimeout(r, 300));
+            return fetchWithRetry(url, options, retries - 1);
+        }
+        return response;
+    } catch (err) {
+        // Do not retry on our own AbortController signal — the timeout already fired.
+        if (retries > 0 && err.name !== 'AbortError') {
+            console.warn(`[PROXY RETRY]: Fetch threw "${err.message}", retrying in 300ms.`);
+            await new Promise(r => setTimeout(r, 300));
+            return fetchWithRetry(url, options, retries - 1);
+        }
+        throw err;
     }
-    return loginData.token || null;
 }
 
 // --- 1. PROXY ROUTE ---
@@ -69,10 +106,11 @@ app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("No URL provided");
 
-    // FIX: AbortController gives us a hard timeout so hung upstreams
-    // don't hold the connection open until the host force-kills the function.
+    // Hard timeout set to 8s — safely under Vercel Hobby's 10s kill limit.
+    // The 2s buffer lets our catch block run and return a clean 504 before
+    // Vercel force-kills the function and issues its own opaque 502.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); 
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
         const forwardedHeaders = {
@@ -82,7 +120,7 @@ app.get('/api/proxy', async (req, res) => {
         };
         if (req.headers.range) forwardedHeaders['Range'] = req.headers.range;
 
-        const response = await fetch(targetUrl, {
+        const response = await fetchWithRetry(targetUrl, {
             headers: forwardedHeaders,
             signal: controller.signal,
         });
@@ -98,14 +136,21 @@ app.get('/api/proxy', async (req, res) => {
         if (response.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
         if (response.headers.get('content-length')) res.setHeader('Content-Length', response.headers.get('content-length'));
 
-        // PERF: Tell edge CDNs to cache non-m3u8 assets (TS segments, MP4 chunks)
-        // for 1 hour. M3U8 playlists are intentionally excluded — they contain
-        // short-lived signed URLs and must always be fetched fresh.
-        if (!contentType.includes('mpegurl') && !targetUrl.includes('.m3u8')) {
-            res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+        // PERF: Smart CDN caching — two explicit exclusions:
+        // 1. M3U8 playlists contain short-lived signed segment URLs and must always
+        //    be fetched fresh. Caching them causes "segment not found" playback errors.
+        // 2. 206 Partial Content (Range/seek requests) are uncacheable by CDN spec.
+        //    This was the root cause of the 100% Cache MISS rate in the logs — Range
+        //    requests make up the bulk of HLS traffic. Applying cache headers to them
+        //    is ignored by edge networks and adds noise. Only full 200 responses for
+        //    non-playlist assets (TS segments, MP4 chunks) are eligible for caching.
+        const isPlaylist = contentType.includes('mpegurl') || targetUrl.includes('.m3u8');
+        const isPartialContent = response.status === 206;
+        if (!isPlaylist && !isPartialContent) {
+            res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600, stale-while-revalidate=600');
         }
 
-        if (contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
+        if (isPlaylist) {
             let text = await response.text();
             const providerBase = new URL(targetUrl).origin + new URL(targetUrl).pathname.replace(/[^/]+$/, '');
             const lines = text.split('\n');
@@ -128,22 +173,48 @@ app.get('/api/proxy', async (req, res) => {
             return res.send(rewrittenText);
         }
 
-        // FIX: Handle pipe errors explicitly so a dropped client connection
-        // doesn't throw an unhandled exception and crash the process.
-        response.body.on('error', (err) => {
-            console.error("[PROXY PIPE ERROR]:", err.message);
-            if (!res.headersSent) res.status(502).end();
+        // FIX: Robust stream pipe error handling.
+        // Three distinct failure scenarios are handled here:
+        // 1. The upstream drops the connection mid-stream (network blip).
+        // 2. The response body exceeds Vercel's 4.5MB serverless payload limit,
+        //    causing the runtime to kill the write stream.
+        // 3. The client (video player) disconnects while buffering (common on seek).
+        // In all cases, we check res.destroyed before attempting to write to avoid
+        // a "write after end" exception that would crash the Node process.
+        res.on('error', (err) => {
+            console.error("[PROXY RES ERROR]: Client-side stream failed:", err.message);
+            // res is already destroyed at this point; no further action needed.
         });
+
+        response.body.on('error', (err) => {
+            console.error("[PROXY UPSTREAM ERROR]: Upstream stream failed:", err.message);
+            if (!res.destroyed && !res.headersSent) {
+                res.status(502).end();
+            } else if (!res.destroyed) {
+                res.destroy(err);
+            }
+        });
+
+        req.on('close', () => {
+            // Client disconnected early (e.g. user scrubbed the video timeline).
+            // Destroy the upstream response body to release the socket and prevent
+            // the upstream fetch from continuing to consume bandwidth into /dev/null.
+            if (response.body && !response.body.destroyed) {
+                response.body.destroy();
+            }
+        });
+
         response.body.pipe(res);
 
     } catch (err) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-            console.error("[PROXY TIMEOUT]: Upstream took too long:", targetUrl);
-            return res.status(504).send("Upstream timed out.");
+            console.error("[PROXY TIMEOUT]: Upstream exceeded 8s limit:", targetUrl);
+            if (!res.headersSent) return res.status(504).send("Upstream timed out.");
+            return;
         }
         console.error("[PROXY ERROR]:", err.message);
-        res.status(502).send("Proxy failed to reach provider.");
+        if (!res.headersSent) res.status(502).send("Proxy failed to reach provider.");
     }
 });
 
@@ -152,7 +223,11 @@ app.post('/api/scrape-stream', async (req, res) => {
     const encryptedPayload = req.body.data;
     if (!encryptedPayload) return res.status(400).json({ error: "Missing encrypted data" });
 
-    let browser = null; // FIX: Declare outside try so finally can always close it.
+    // FIX: Declared outside try so the finally block can always close it,
+    // even if Puppeteer launch itself throws. Previously any thrown error
+    // left a Chromium process running until OOM crash on the serverless instance.
+    let browser = null;
+    let page = null;
 
     try {
         const bytes = CryptoJS.AES.decrypt(encryptedPayload, SECRET_KEY);
@@ -191,12 +266,12 @@ app.post('/api/scrape-stream', async (req, res) => {
                 headless: isLocal ? true : chromium.headless,
             });
 
-            const page = await browser.newPage();
+            page = await browser.newPage();
             await page.setRequestInterception(true);
 
-            // FIX: Use a local variable captured by this closure only.
-            // The outer `videoUrl` was being mutated by the event listener,
-            // creating a race condition under concurrent requests.
+            // FIX: `capturedUrl` is local to this closure. The original code mutated
+            // an outer-scope `videoUrl` variable from inside the event listener,
+            // creating a race condition when concurrent scrape requests shared state.
             let capturedUrl = null;
 
             page.on('request', (request) => {
@@ -218,8 +293,7 @@ app.post('/api/scrape-stream', async (req, res) => {
             await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await page.mouse.click(640, 360).catch(() => {});
 
-            // PERF: Poll with a hard cap of 20 seconds total (40 × 500ms).
-            // Previously this could silently spin forever if the page hung.
+            // Poll with a hard cap of 20 seconds (40 × 500ms).
             let attempts = 0;
             while (!capturedUrl && attempts < 40) {
                 await new Promise(r => setTimeout(r, 500));
@@ -232,6 +306,9 @@ app.post('/api/scrape-stream', async (req, res) => {
                 return res.status(404).json({ success: false, message: "Stream not found." });
             }
 
+            // FIX: Only write to Supabase cache after we have confirmed a valid URL.
+            // Previously the upsert ran even if videoUrl was null or if the downstream
+            // pipe had already failed, which would cache a useless empty value.
             const expiresAt = new Date(Date.now() + 3600000).toISOString();
             await supabase.from('streams').upsert({
                 key: cacheKey,
@@ -246,8 +323,12 @@ app.post('/api/scrape-stream', async (req, res) => {
         console.error("[SCRAPER ERROR]:", err.message);
         res.status(500).json({ success: false, error: err.message });
     } finally {
-        // FIX: Always close the browser — whether we succeeded, threw, or timed out.
-        // Previously a thrown error would leave Chromium running until OOM crash.
+        // FIX: Always close the page before the browser. Skipping page.close()
+        // causes Puppeteer to leak the page context on Vercel's frozen runtime,
+        // where the process is suspended (not terminated) between invocations.
+        if (page) {
+            await page.close().catch((e) => console.error("[PAGE CLOSE ERROR]:", e.message));
+        }
         if (browser) {
             await browser.close().catch((e) => console.error("[BROWSER CLOSE ERROR]:", e.message));
         }
@@ -267,6 +348,12 @@ app.post('/api/subs', async (req, res) => {
 
         const { imdbId, type, season, episode } = JSON.parse(decryptedString);
 
+        // FIX: Subtitle fetch AbortController — previously subtitle downloads had no
+        // timeout at all. A hung OpenSubtitles response would hold the serverless
+        // function open until Vercel force-killed it, producing a 502 with no log.
+        const subsController = new AbortController();
+        const subsTimeoutId = setTimeout(() => subsController.abort(), 8000);
+
         const osHeaders = {
             "Api-Key": process.env.OPENSUBTITLES_API_KEY,
             "Content-Type": "application/json",
@@ -274,7 +361,9 @@ app.post('/api/subs', async (req, res) => {
             "User-Agent": process.env.OPENSUBTITLES_USER_AGENT
         };
 
-        // PERF: Use cached token instead of logging in on every request.
+        // PERF: Reuse cached token instead of logging in on every request.
+        // The promise-lock in getOsToken prevents parallel burst requests from
+        // each firing their own login call and burning the OS rate limit.
         const token = await getOsToken(osHeaders);
         if (token) osHeaders["Authorization"] = `Bearer ${token}`;
 
@@ -292,7 +381,10 @@ app.post('/api/subs', async (req, res) => {
             params.append("type", "movie");
         }
 
-        const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, { headers: osHeaders });
+        const searchRes = await fetch(`${OS_BASE}/subtitles?${params.toString()}`, {
+            headers: osHeaders,
+            signal: subsController.signal,
+        });
         const searchData = await searchRes.json();
 
         let tracksToDownload = [];
@@ -319,25 +411,38 @@ app.post('/api/subs', async (req, res) => {
         }
 
         // PERF: Download all subtitle tracks in parallel instead of sequentially.
-        // With 6 tracks at ~250ms each, this cuts wait time from ~1.5s down to ~250ms.
+        // With 6 tracks at ~250ms each, this cuts wait time from ~1.5s to ~250ms.
+        // Each individual download also shares the same AbortController so the
+        // entire batch is cancelled cleanly if the overall timeout fires.
         const downloadResults = await Promise.all(
             tracksToDownload.map(async (track) => {
-                const dlRes = await fetch(`${OS_BASE}/download`, {
-                    method: "POST",
-                    headers: osHeaders,
-                    body: JSON.stringify({ file_id: track.fileId })
-                });
-                const dlData = await dlRes.json();
-                if (dlData.link) {
-                    return {
-                        title: track.title,
-                        language: track.language,
-                        uri: dlData.link
-                    };
+                try {
+                    const dlRes = await fetch(`${OS_BASE}/download`, {
+                        method: "POST",
+                        headers: osHeaders,
+                        body: JSON.stringify({ file_id: track.fileId }),
+                        signal: subsController.signal,
+                    });
+                    const dlData = await dlRes.json();
+                    if (dlData.link) {
+                        return {
+                            title: track.title,
+                            language: track.language,
+                            uri: dlData.link
+                        };
+                    }
+                    return null;
+                } catch (dlErr) {
+                    // FIX: A single failed subtitle track should not crash the entire
+                    // request. Log it and return null so Promise.all continues for
+                    // the remaining tracks.
+                    console.error(`[SUBTITLE DOWNLOAD ERROR] Track ${track.fileId}:`, dlErr.message);
+                    return null;
                 }
-                return null;
             })
         );
+
+        clearTimeout(subsTimeoutId);
 
         const finalTracks = downloadResults.filter(Boolean);
 
@@ -350,6 +455,9 @@ app.post('/api/subs', async (req, res) => {
 
     } catch (error) {
         console.error("[SUBTITLE ERROR]:", error);
+        if (error.name === 'AbortError') {
+            return res.status(504).json({ error: "Subtitle service timed out." });
+        }
         res.status(500).json({ error: "Failed to process securely" });
     }
 });
@@ -364,7 +472,7 @@ app.post('/api/add-to-watchlist', async (req, res) => {
     // logic...
 });
 
-// --- 5. THE UNIFIED PIECE: SERVE FRONTEND + LISTEN (UNTOUCHED) ---
+// --- 5. THE UNIFIED PIECE: SERVE FRONTEND + LISTEN ---
 app.use(express.static(path.join(__dirname, '../dist')));
 
 app.get(/^\/(?!api).*/, (req, res) => {
