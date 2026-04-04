@@ -322,6 +322,20 @@ useEffect(() => {
 if (resolvedMediaType === "tv" && selectedSeason)
 fetchSeasonDetails(id, selectedSeason).then(setEpisodes);
   }, [selectedSeason, id, resolvedMediaType]);
+// NEW: Subtitle sync effect – safely targets only our rendered <track> elements
+useEffect(() => {
+  if (!videoRef.current) return;
+  const video = videoRef.current;
+  const trackElements = video.querySelectorAll('track');
+  trackElements.forEach((trackEl, idx) => {
+    const textTrack = trackEl.track;
+    if (selectedSubtitle === -1) {
+      textTrack.mode = 'disabled';
+    } else {
+      textTrack.mode = idx === selectedSubtitle ? 'showing' : 'disabled';
+    }
+  });
+}, [selectedSubtitle, subtitleTracks.length]);
 const renderStars = (rating) => {
 const stars = [];
 const fullStars = Math.floor(rating / 2);
@@ -359,22 +373,16 @@ setSelectedAudio(nextIndex === 0 ? "original" : "english");
     }
   };
 const selectSubtitle = (index) => {
-setSelectedSubtitle(index);
-if (videoRef.current) {
-const tracks = videoRef.current.textTracks;
-for (let i = 0; i < tracks.length; i++) {
-tracks[i].mode = i === index ? "showing" : "disabled";
-      }
-    }
-  };
+  setSelectedSubtitle(index);
+};
 const getQualityLabel = (index) => {
-  if (index === -1 || index >= qualityLevels.length || !qualityLevels[index]) return "Auto";
-  const level = qualityLevels[index];
-  return `${level.height}p`;
+if (index === -1 || index >= qualityLevels.length || !qualityLevels[index]) return "Auto";
+const level = qualityLevels[index];
+return `${level.height}p`;
 };
 const selectQuality = (levelIndex) => {
-  setSelectedQuality(levelIndex);
-  if (hlsRef.current) {
+setSelectedQuality(levelIndex);
+if (hlsRef.current) {
     hlsRef.current.currentLevel = levelIndex;
   }
 };
