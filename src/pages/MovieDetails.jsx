@@ -35,6 +35,7 @@ const MovieDetails = () => {
   const { id, mediaType: typeFromPath } = useParams();
   const navigate = useNavigate();
   const resolvedMediaType = typeFromPath === "tv" ? "tv" : "movie";
+
   const [movie, setMovie] = useState(null);
   const [loading, setLoading] = useState(true);
   const [episodes, setEpisodes] = useState([]);
@@ -55,9 +56,26 @@ const MovieDetails = () => {
   const [qualityLevels, setQualityLevels] = useState([]);
   const [selectedQuality, setSelectedQuality] = useState(-1);
 
+  // ─── STEP 1: Click-to-Toggle menu mutex ──────────────────────────────────────
+  // Values: null | 'quality' | 'subs'
+  // Only one menu can be open at a time. Clicking the same button again closes it.
+  const [activeMenu, setActiveMenu] = useState(null);
+
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const progressInterval = useRef(null);
+  const controlsRef = useRef(null);
+
+  // ─── STEP 1: Close open menu when clicking outside the controls bar ───────────
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (controlsRef.current && !controlsRef.current.contains(e.target)) {
+        setActiveMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
 
   // ─── SECURITY: Encrypt all payloads before sending to backend ────────────────
   const encryptData = (payload) => {
@@ -88,7 +106,8 @@ const MovieDetails = () => {
         if (resolvedMediaType === "tv") {
           const highestProgress = data.reduce((prev, current) => {
             if (current.season > prev.season) return current;
-            if (current.season === prev.season && current.episode > prev.episode) return current;
+            if (current.season === prev.season && current.episode > prev.episode)
+              return current;
             return prev;
           }, data[0]);
           setResumeData({
@@ -101,7 +120,7 @@ const MovieDetails = () => {
         }
       }
     } catch {
-      // ─── SECURITY FIX 1: Silent failure — no internal state exposed ───────────
+      // ─── SECURITY: Silent failure — no internal state exposed ─────────────────
     }
   };
 
@@ -115,7 +134,7 @@ const MovieDetails = () => {
         .maybeSingle();
       setIsInList(!!data);
     } catch {
-      // ─── SECURITY FIX 1: Silent failure ──────────────────────────────────────
+      // ─── SECURITY: Silent failure ─────────────────────────────────────────────
       setIsInList(false);
     }
   };
@@ -139,13 +158,15 @@ const MovieDetails = () => {
             title: movie?.title || movie?.name,
             poster: movie?.poster_path || movie?.backdrop_path,
             type: resolvedMediaType,
-            year: (movie?.release_date || movie?.first_air_date)?.split("-")[0] || "N/A",
+            year:
+              (movie?.release_date || movie?.first_air_date)?.split("-")[0] ||
+              "N/A",
           },
         ]);
         if (!error) setIsInList(true);
       }
     } catch {
-      // ─── SECURITY FIX 1: Silent failure ──────────────────────────────────────
+      // ─── SECURITY: Silent failure ─────────────────────────────────────────────
     } finally {
       setIsSavingList(false);
     }
@@ -173,7 +194,7 @@ const MovieDetails = () => {
         { onConflict: "user_id, media_id" }
       );
     } catch {
-      // ─── SECURITY FIX 1: Silent failure ──────────────────────────────────────
+      // ─── SECURITY: Silent failure ─────────────────────────────────────────────
     }
   };
 
@@ -208,6 +229,8 @@ const MovieDetails = () => {
     setIsCleaning(true);
     setCleanUrl(null);
     setError(null);
+    // ─── Reset menus when a new stream is triggered ───────────────────────────
+    setActiveMenu(null);
     try {
       const payload = { id: mId, type: mType, s, e };
       const encrypted = encryptData(payload);
@@ -225,7 +248,7 @@ const MovieDetails = () => {
         setError("Stream could not be found.");
       }
     } catch {
-      // ─── SECURITY FIX 1: Generic user-facing error only ──────────────────────
+      // ─── SECURITY: Generic user-facing message only — no internals exposed ────
       setError("Server is offline or encountered an error.");
     } finally {
       setIsCleaning(false);
@@ -246,23 +269,27 @@ const MovieDetails = () => {
         const bytes = CryptoJS.AES.decrypt(result.data, SECRET_KEY);
         const decrypted = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
         setSubtitleTracks(decrypted.tracks || []);
-        const enIdx = (decrypted.tracks || []).findIndex((t) => t.language === "en");
+        const enIdx = (decrypted.tracks || []).findIndex(
+          (t) => t.language === "en"
+        );
         if (enIdx !== -1) setSelectedSubtitle(enIdx);
       }
     } catch {
-      // ─── SECURITY FIX 1: Silent failure — subtitle load errors hidden ─────────
+      // ─── SECURITY: Silent failure — subtitle errors never reach console ────────
     }
   };
 
   const handleAutoPlayNext = () => {
     if (resolvedMediaType === "tv") {
-      const nextEp = episodes.find((ep) => ep.episode_number === selectedEpisode + 1);
+      const nextEp = episodes.find(
+        (ep) => ep.episode_number === selectedEpisode + 1
+      );
       if (nextEp) handleEpisodeSelect(nextEp.episode_number);
       else setActiveStream(null);
     }
   };
 
-  // ─── FEATURE: HLS player init with safe playback + clean destruction ─────────
+  // ─── HLS Player: Safe playback + clean destruction ───────────────────────────
   useEffect(() => {
     if (cleanUrl && videoRef.current) {
       const video = videoRef.current;
@@ -273,12 +300,12 @@ const MovieDetails = () => {
         const attemptSeekAndPlay = () => {
           const playVideo = () => {
             if (savedTime > 0) video.currentTime = savedTime;
-            // ─── SECURITY FIX 2: AbortError fully silenced — no console output ──
+            // ─── Safe play: AbortError fully silenced, zero console output ────
             const playPromise = video.play();
             if (playPromise !== undefined) {
               playPromise.catch((e) => {
                 if (e.name !== "AbortError") {
-                  // Generic catch — no internal details exposed to console
+                  // Non-abort errors swallowed silently — no exposure to console
                 }
               });
             }
@@ -293,7 +320,9 @@ const MovieDetails = () => {
 
         if (Hls.isSupported()) {
           hlsRef.current = new Hls({
-            xhrSetup: (xhr) => { xhr.withCredentials = false; },
+            xhrSetup: (xhr) => {
+              xhr.withCredentials = false;
+            },
             enableWorker: true,
           });
           hlsRef.current.loadSource(cleanUrl);
@@ -306,11 +335,16 @@ const MovieDetails = () => {
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = cleanUrl;
-          video.addEventListener("loadedmetadata", attemptSeekAndPlay, { once: true });
+          video.addEventListener("loadedmetadata", attemptSeekAndPlay, {
+            once: true,
+          });
         }
 
         video.onpause = () => saveProgress(video.currentTime);
-        video.onended = () => { saveProgress(0); handleAutoPlayNext(); };
+        video.onended = () => {
+          saveProgress(0);
+          handleAutoPlayNext();
+        };
       };
 
       initPlayer();
@@ -323,7 +357,7 @@ const MovieDetails = () => {
     }
 
     return () => {
-      // ─── FEATURE: Clean HLS destruction stops background bandwidth drain ──────
+      // ─── Clean destruction: stops all background bandwidth consumption ────────
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -351,7 +385,7 @@ const MovieDetails = () => {
           setSelectedSeason(firstSeason.season_number);
         }
       } catch {
-        // ─── SECURITY FIX 1: Silent failure ────────────────────────────────────
+        // ─── SECURITY: Silent failure ─────────────────────────────────────────
       } finally {
         setLoading(false);
       }
@@ -364,9 +398,9 @@ const MovieDetails = () => {
       fetchSeasonDetails(id, selectedSeason).then(setEpisodes);
   }, [selectedSeason, id, resolvedMediaType]);
 
-  // ─── FEATURE: Subtitle sync via querySelectorAll — bypasses hls.js metadata ──
-  // This is the only reliable way to toggle subtitle visibility because hls.js
-  // injects hidden metadata tracks that offset the standard track index.
+  // ─── Subtitle sync via querySelectorAll ──────────────────────────────────────
+  // Bypasses hls.js injected metadata tracks that shift the native track index.
+  // This is the only reliable cross-browser method to set subtitle visibility.
   useEffect(() => {
     if (!videoRef.current) return;
     const video = videoRef.current;
@@ -374,11 +408,12 @@ const MovieDetails = () => {
     trackElements.forEach((trackEl, idx) => {
       const textTrack = trackEl.track;
       if (textTrack) {
-        if (selectedSubtitle === -1) {
-          textTrack.mode = "disabled";
-        } else {
-          textTrack.mode = idx === selectedSubtitle ? "showing" : "disabled";
-        }
+        textTrack.mode =
+          selectedSubtitle === -1
+            ? "disabled"
+            : idx === selectedSubtitle
+            ? "showing"
+            : "disabled";
       }
     });
   }, [selectedSubtitle, subtitleTracks.length]);
@@ -391,7 +426,9 @@ const MovieDetails = () => {
         <Star
           key={i}
           size={16}
-          className={i < fullStars ? "fill-red-600 text-red-600" : "text-gray-600"}
+          className={
+            i < fullStars ? "fill-red-600 text-red-600" : "text-gray-600"
+          }
         />
       );
     }
@@ -403,6 +440,7 @@ const MovieDetails = () => {
     if (videoRef.current) saveProgress(videoRef.current.currentTime);
     setSelectedEpisode(episodeNum);
     setActiveStream(true);
+    setActiveMenu(null);
     triggerBackendScrape(id, resolvedMediaType, selectedSeason, episodeNum);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -422,22 +460,30 @@ const MovieDetails = () => {
 
   const toggleAudio = () => {
     if (audioTracks.length > 1 && hlsRef.current) {
-      const nextIndex = (hlsRef.current.audioTrack + 1) % audioTracks.length;
+      const nextIndex =
+        (hlsRef.current.audioTrack + 1) % audioTracks.length;
       hlsRef.current.audioTrack = nextIndex;
       setSelectedAudio(nextIndex === 0 ? "original" : "english");
     }
   };
 
-  const selectSubtitle = (index) => setSelectedSubtitle(index);
+  // ─── STEP 1: selectSubtitle closes the menu immediately after selection ───────
+  const selectSubtitle = (index) => {
+    setSelectedSubtitle(index);
+    setActiveMenu(null);
+  };
 
   const getQualityLabel = (index) => {
-    if (index === -1 || index >= qualityLevels.length || !qualityLevels[index]) return "Auto";
+    if (index === -1 || index >= qualityLevels.length || !qualityLevels[index])
+      return "Auto";
     return `${qualityLevels[index].height}p`;
   };
 
+  // ─── STEP 1: selectQuality closes the menu immediately after selection ────────
   const selectQuality = (levelIndex) => {
     setSelectedQuality(levelIndex);
     if (hlsRef.current) hlsRef.current.currentLevel = levelIndex;
+    setActiveMenu(null);
   };
 
   if (loading)
@@ -464,11 +510,8 @@ const MovieDetails = () => {
     votes,
   } = movie;
 
-  // ─── BUG FIX: genre & language were used in JSX but never derived from movie ─
-  // Previously caused ReferenceError crashes on every render.
   const genre = movie.genres?.map((g) => g.name).join(", ") || "";
   const language = movie.original_language?.toUpperCase() || "EN";
-
   const displayTitle = title || name;
   const displayImage = backdrop_path
     ? `https://image.tmdb.org/t/p/original${backdrop_path}`
@@ -480,8 +523,13 @@ const MovieDetails = () => {
         onClick={() => navigate(-1)}
         className="fixed top-6 left-6 md:top-8 md:left-20 z-[60] flex items-center gap-2 px-4 py-2 md:px-5 md:py-2.5 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full hover:bg-white/10 hover:border-white/30 transition-all group"
       >
-        <ArrowLeft size={16} className="md:size-[18px] group-hover:-translate-x-1 transition-transform" />
-        <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">Go Back</span>
+        <ArrowLeft
+          size={16}
+          className="md:size-[18px] group-hover:-translate-x-1 transition-transform"
+        />
+        <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">
+          Go Back
+        </span>
       </button>
 
       <div className="fixed inset-0 z-0 w-full h-full overflow-hidden">
@@ -512,11 +560,14 @@ const MovieDetails = () => {
 
             <div className="space-y-4 text-white">
               <div className="flex flex-wrap items-center gap-3 md:gap-4 text-xs md:text-sm tracking-widest opacity-80">
-                <span>{badgeYear || (release_date || first_air_date)?.split("-")[0]}</span>
-                <span className="bg-red-600 px-1 text-[10px] rounded-sm font-bold text-white uppercase">12+</span>
+                <span>
+                  {badgeYear || (release_date || first_air_date)?.split("-")[0]}
+                </span>
+                <span className="bg-red-600 px-1 text-[10px] rounded-sm font-bold text-white uppercase">
+                  12+
+                </span>
                 <span>{runtime || "TV Series"}</span>
                 <span className="hidden xs:inline">|</span>
-                {/* ─── BUG FIX: genre now correctly derived from movie.genres ─── */}
                 <span className="uppercase">{genre}</span>
               </div>
               <div className="flex items-center gap-2">
@@ -527,25 +578,29 @@ const MovieDetails = () => {
               </div>
             </div>
 
-            <p className="text-sm md:text-base leading-relaxed text-white max-w-xl drop-shadow-md">{plot}</p>
+            <p className="text-sm md:text-base leading-relaxed text-white max-w-xl drop-shadow-md">
+              {plot}
+            </p>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 pt-4 border-t border-white/10 max-w-3xl">
               <div className="space-y-1">
                 <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
                   <Calendar size={12} /> Release
                 </p>
-                <p className="text-xs font-bold">{badgeYear || first_air_date || "N/A"}</p>
+                <p className="text-xs font-bold">
+                  {badgeYear || first_air_date || "N/A"}
+                </p>
               </div>
               <div className="space-y-1">
                 <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
                   <Globe size={12} /> Language
                 </p>
-                {/* ─── BUG FIX: language now correctly derived from movie.original_language ── */}
                 <p className="text-xs font-bold uppercase">{language}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[9px] md:text-[10px] uppercase tracking-tighter opacity-50 flex items-center gap-2">
-                  <User size={12} /> {resolvedMediaType === "tv" ? "Created" : "Director"}
+                  <User size={12} />{" "}
+                  {resolvedMediaType === "tv" ? "Created" : "Director"}
                 </p>
                 <p className="text-xs font-bold truncate">{director || "N/A"}</p>
               </div>
@@ -590,7 +645,10 @@ const MovieDetails = () => {
             </div>
 
             <button
-              onClick={() => { setActiveStream(null); playTrailer(); }}
+              onClick={() => {
+                setActiveStream(null);
+                playTrailer();
+              }}
               className="flex items-center gap-3 md:gap-4 pt-6 md:pt-8 text-white hover:text-red-500 transition-all font-bold uppercase tracking-[0.2em] group text-[10px] md:text-sm"
             >
               <div className="p-2 md:p-3 border-2 border-white group-hover:border-red-500 rounded-full transition-all">
@@ -609,7 +667,10 @@ const MovieDetails = () => {
               </h2>
               <select
                 value={selectedSeason}
-                onChange={(e) => { setSelectedSeason(Number(e.target.value)); setSelectedEpisode(1); }}
+                onChange={(e) => {
+                  setSelectedSeason(Number(e.target.value));
+                  setSelectedEpisode(1);
+                }}
                 className="w-full sm:w-auto bg-zinc-900 border border-white/10 text-[10px] md:text-xs px-4 py-3 md:py-2 rounded uppercase tracking-widest text-white outline-none cursor-pointer"
               >
                 {movie.seasons.map((s) => (
@@ -672,7 +733,9 @@ const MovieDetails = () => {
           <div className="absolute top-0 w-full p-4 md:p-8 flex justify-between items-center z-[110] text-white pointer-events-none">
             <h2 className="text-[9px] md:text-xs uppercase tracking-widest font-bold text-red-600 bg-black/50 px-4 md:px-6 py-2 rounded-full pointer-events-auto truncate max-w-[70%]">
               {displayTitle}{" "}
-              {activeStream && resolvedMediaType === "tv" && `• S${selectedSeason}:E${selectedEpisode}`}
+              {activeStream &&
+                resolvedMediaType === "tv" &&
+                `• S${selectedSeason}:E${selectedEpisode}`}
             </h2>
             <button
               onClick={() => {
@@ -680,6 +743,7 @@ const MovieDetails = () => {
                 setActiveStream(null);
                 stopTrailer();
                 setCleanUrl(null);
+                setActiveMenu(null);
               }}
               className="text-white hover:text-red-500 transition-all bg-black/50 p-2 md:p-3 rounded-full pointer-events-auto"
             >
@@ -698,9 +762,18 @@ const MovieDetails = () => {
             ) : error ? (
               <div className="absolute inset-0 z-[115] bg-black flex flex-col items-center justify-center text-center px-6">
                 <AlertCircle className="text-red-600 mb-4" size={40} />
-                <p className="text-[10px] md:text-xs font-black tracking-widest uppercase">{error}</p>
+                <p className="text-[10px] md:text-xs font-black tracking-widest uppercase">
+                  {error}
+                </p>
                 <button
-                  onClick={() => triggerBackendScrape(id, resolvedMediaType, selectedSeason, selectedEpisode)}
+                  onClick={() =>
+                    triggerBackendScrape(
+                      id,
+                      resolvedMediaType,
+                      selectedSeason,
+                      selectedEpisode
+                    )
+                  }
                   className="mt-6 border border-white/20 px-6 py-2 text-[10px] uppercase font-bold hover:bg-white/10 transition-all"
                 >
                   Retry Connection
@@ -716,12 +789,14 @@ const MovieDetails = () => {
                   crossOrigin="anonymous"
                   className="w-full h-full object-contain bg-black"
                 >
-                  {/* ─── SECURITY: All subtitle tracks proxied — no CORS leaks ── */}
+                  {/* ─── STEP 3: &type=sub flag tells backend to set correct    ──
+                      Content-Type headers so the browser caption engine parses
+                      the VTT file correctly. All tracks proxied for CORS. ────── */}
                   {subtitleTracks.map((track, idx) => (
                     <track
                       key={idx}
                       kind="subtitles"
-                      src={`/api/proxy?url=${encodeURIComponent(track.uri)}`}
+                      src={`/api/proxy?url=${encodeURIComponent(track.uri)}&type=sub`}
                       label={track.title}
                       srcLang={track.language}
                       default={idx === selectedSubtitle}
@@ -729,8 +804,11 @@ const MovieDetails = () => {
                   ))}
                 </video>
 
-                {/* ─── FEATURE: Controls always rendered; quality always visible ── */}
-                <div className="absolute bottom-20 md:bottom-24 right-4 md:right-8 flex flex-wrap gap-2 z-[9999] pointer-events-auto">
+                {/* ─── STEP 1: Click-to-Toggle controls bar ─────────────────── */}
+                <div
+                  ref={controlsRef}
+                  className="absolute bottom-20 md:bottom-24 right-4 md:right-8 flex flex-wrap gap-2 z-[9999] pointer-events-auto"
+                >
                   {audioTracks.length > 1 && (
                     <button
                       onClick={toggleAudio}
@@ -740,74 +818,112 @@ const MovieDetails = () => {
                     </button>
                   )}
 
-                  {/* ─── FEATURE: Quality selector — always visible ─────────────── */}
-                  <div className="relative group">
-                    <button className="bg-black/80 backdrop-blur-xl border border-white/30 text-white px-4 py-2 rounded shadow-2xl text-[10px] uppercase font-bold hover:bg-white/20 transition-all">
-                      Quality: {getQualityLabel(selectedQuality)}
-                    </button>
-                    <div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col bg-black/95 backdrop-blur-xl border border-white/20 rounded overflow-hidden min-w-[160px] shadow-2xl">
+                  {/* ─── STEP 1 + UI REQUIREMENT: Quality always rendered when   ──
+                      activeStream is true, regardless of qualityLevels count.
+                      Shows "Auto" as the default state before HLS levels load. ── */}
+                  {activeStream && (
+                    <div className="relative">
                       <button
-                        onClick={() => selectQuality(-1)}
-                        className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
-                          selectedQuality === -1
-                            ? "bg-red-600/30 text-red-400 font-black"
-                            : "text-white/80"
+                        onClick={() =>
+                          setActiveMenu((prev) =>
+                            prev === "quality" ? null : "quality"
+                          )
+                        }
+                        className={`bg-black/80 backdrop-blur-xl border text-white px-4 py-2 rounded shadow-2xl text-[10px] uppercase font-bold transition-all ${
+                          activeMenu === "quality"
+                            ? "border-red-500 bg-red-600/20"
+                            : "border-white/30 hover:bg-white/20"
                         }`}
                       >
-                        Auto
+                        Quality: {getQualityLabel(selectedQuality)}
                       </button>
-                      {qualityLevels.length > 0 && (
-                        <div className="max-h-48 overflow-y-auto scrollbar-hide">
-                          {qualityLevels.map((level, i) => (
-                            <button
-                              key={i}
-                              onClick={() => selectQuality(i)}
-                              className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
-                                selectedQuality === i
-                                  ? "bg-red-600/30 text-red-400 font-black"
-                                  : "text-white/80"
-                              }`}
-                            >
-                              {level.height}p
-                            </button>
-                          ))}
+
+                      {/* Conditionally rendered — no CSS hover dependency ──────── */}
+                      {activeMenu === "quality" && (
+                        <div className="absolute bottom-full right-0 mb-2 flex flex-col bg-black/95 backdrop-blur-xl border border-white/20 rounded overflow-hidden min-w-[160px] shadow-2xl">
+                          <button
+                            onClick={() => selectQuality(-1)}
+                            className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
+                              selectedQuality === -1
+                                ? "bg-red-600/30 text-red-400 font-black"
+                                : "text-white/80"
+                            }`}
+                          >
+                            Auto
+                          </button>
+                          {qualityLevels.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto scrollbar-hide">
+                              {qualityLevels.map((level, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => selectQuality(i)}
+                                  className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
+                                    selectedQuality === i
+                                      ? "bg-red-600/30 text-red-400 font-black"
+                                      : "text-white/80"
+                                  }`}
+                                >
+                                  {level.height}p
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  </div>
+                  )}
 
+                  {/* ─── STEP 1: Subtitles click-to-toggle, same mutex pattern ── */}
                   {subtitleTracks.length > 0 && (
-                    <div className="relative group">
-                      <button className="bg-black/80 backdrop-blur-xl border border-white/30 text-white px-4 py-2 rounded shadow-2xl text-[10px] uppercase font-bold hover:bg-white/20 transition-all">
-                        Subtitles ({selectedSubtitle === -1 ? "Off" : subtitleTracks[selectedSubtitle]?.title})
+                    <div className="relative">
+                      <button
+                        onClick={() =>
+                          setActiveMenu((prev) =>
+                            prev === "subs" ? null : "subs"
+                          )
+                        }
+                        className={`bg-black/80 backdrop-blur-xl border text-white px-4 py-2 rounded shadow-2xl text-[10px] uppercase font-bold transition-all ${
+                          activeMenu === "subs"
+                            ? "border-red-500 bg-red-600/20"
+                            : "border-white/30 hover:bg-white/20"
+                        }`}
+                      >
+                        Subs:{" "}
+                        {selectedSubtitle === -1
+                          ? "Off"
+                          : subtitleTracks[selectedSubtitle]?.title}
                       </button>
-                      <div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col bg-black/95 backdrop-blur-xl border border-white/20 rounded overflow-hidden min-w-[160px] shadow-2xl">
-                        <button
-                          onClick={() => selectSubtitle(-1)}
-                          className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
-                            selectedSubtitle === -1
-                              ? "bg-red-600/30 text-red-400 font-black"
-                              : "text-white/80"
-                          }`}
-                        >
-                          Off
-                        </button>
-                        <div className="max-h-48 overflow-y-auto scrollbar-hide">
-                          {subtitleTracks.map((t, i) => (
-                            <button
-                              key={i}
-                              onClick={() => selectSubtitle(i)}
-                              className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
-                                selectedSubtitle === i
-                                  ? "bg-red-600/30 text-red-400 font-black"
-                                  : "text-white/80"
-                              }`}
-                            >
-                              {t.title}
-                            </button>
-                          ))}
+
+                      {/* Conditionally rendered — no CSS hover dependency ──────── */}
+                      {activeMenu === "subs" && (
+                        <div className="absolute bottom-full right-0 mb-2 flex flex-col bg-black/95 backdrop-blur-xl border border-white/20 rounded overflow-hidden min-w-[160px] shadow-2xl">
+                          <button
+                            onClick={() => selectSubtitle(-1)}
+                            className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
+                              selectedSubtitle === -1
+                                ? "bg-red-600/30 text-red-400 font-black"
+                                : "text-white/80"
+                            }`}
+                          >
+                            Off
+                          </button>
+                          <div className="max-h-48 overflow-y-auto scrollbar-hide">
+                            {subtitleTracks.map((t, i) => (
+                              <button
+                                key={i}
+                                onClick={() => selectSubtitle(i)}
+                                className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${
+                                  selectedSubtitle === i
+                                    ? "bg-red-600/30 text-red-400 font-black"
+                                    : "text-white/80"
+                                }`}
+                              >
+                                {t.title}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -823,6 +939,33 @@ const MovieDetails = () => {
           </div>
         </div>
       )}
+
+      {/* ─── STEP 2: Force subtitle rendering via injected CSS ───────────────────
+          video::cue overrides browser default caption styling.
+          ::-webkit-media-text-track-display and -container force the Webkit
+          caption layer to be overflow-visible and not clipped by parent layout.
+          Without this, captions render at display:none or z-index:0 in some
+          browsers even when the track mode is correctly set to 'showing'. ─────── */}
+      <style>{`
+        video::cue {
+          background-color: rgba(0, 0, 0, 0.78);
+          color: #ffffff;
+          font-size: 1rem;
+          font-family: sans-serif;
+          line-height: 1.5;
+          padding: 2px 8px;
+          border-radius: 2px;
+        }
+        video::-webkit-media-text-track-display {
+          overflow: visible !important;
+          z-index: 9999 !important;
+          pointer-events: none;
+        }
+        video::-webkit-media-text-track-container {
+          overflow: visible !important;
+          z-index: 9999 !important;
+        }
+      `}</style>
     </div>
   );
 };
