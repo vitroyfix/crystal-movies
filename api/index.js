@@ -88,7 +88,7 @@ async function fetchWithRetry(url, options, retries = 2) {
   }
 }
 
-// --- 1. PROXY ROUTE (with TMDB key injection + Content-Type override + encoding safety + safe streaming) ---
+// --- 1. PROXY ROUTE (with TMDB key injection + Header Persistence + Subtitle text/vtt fix) ---
 app.get('/api/proxy', async (req, res) => {
   const key = req.query.key;
   let targetUrl = req.query.url;
@@ -122,21 +122,17 @@ app.get('/api/proxy', async (req, res) => {
 
   if (!targetUrl) return res.status(400).send("No target URL resolved");
 
-  // ─── TMDB API KEY INJECTION (fixes 401 Unauthorized) ───────────────────────
-  // The real TMDB_API_KEY is injected server-side only. Never exposed to client.
+  // TMDB API Key Injection (fixes 401 Unauthorized)
   if (targetUrl.includes('api.themoviedb.org')) {
     try {
       const tmdbUrl = new URL(targetUrl);
       if (!tmdbUrl.searchParams.has('api_key')) {
-        if (!process.env.TMDB_API_KEY) {
-          return res.status(500).send("TMDB API key not configured on server.");
+        if (process.env.TMDB_API_KEY) {
+          tmdbUrl.searchParams.set('api_key', process.env.TMDB_API_KEY);
         }
-        tmdbUrl.searchParams.set('api_key', process.env.TMDB_API_KEY);
       }
       targetUrl = tmdbUrl.toString();
-    } catch (e) {
-      // URL parsing failed — proceed with original URL (fallback)
-    }
+    } catch (e) {}
   }
 
   const controller = new AbortController();
@@ -154,8 +150,7 @@ app.get('/api/proxy', async (req, res) => {
     }
     if (req.headers.range) forwardedHeaders['Range'] = req.headers.range;
 
-    // Step 2: Encoding & Compression Safety
-    // Do NOT forward Accept-Encoding from client → prevents double-zipping
+    // Encoding & Compression Safety
     delete forwardedHeaders['accept-encoding'];
 
     const response = await fetchWithRetry(targetUrl, {
@@ -169,7 +164,7 @@ app.get('/api/proxy', async (req, res) => {
 
     const contentType = response.headers.get('content-type') || "";
 
-    // Step 1: Content-Type Overrides (Subtitle Fix)
+    // Subtitle visibility fix + CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.query.type === 'sub') {
       res.setHeader('Content-Type', 'text/vtt');
@@ -217,7 +212,7 @@ app.get('/api/proxy', async (req, res) => {
       return res.send(rewrittenText);
     }
 
-    // Step 3: Secure Error Handling
+    // Secure streaming
     res.on('error', () => {});
     response.body.on('error', (err) => {
       if (!res.destroyed && !res.headersSent) {
@@ -244,7 +239,7 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
-// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (increased robustness) ---
+// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (unchanged) ---
 app.post('/api/scrape-stream', async (req, res) => {
   const encryptedPayload = req.body.data;
   if (!encryptedPayload) return res.status(400).json({ error: "Invalid request payload." });
@@ -342,7 +337,7 @@ app.post('/api/scrape-stream', async (req, res) => {
   }
 });
 
-// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE ---
+// --- 3. SECURE ENCRYPTED SUBTITLES ROUTE (UPDATED with proxying + TV specificity) ---
 app.post('/api/subs', async (req, res) => {
   const OS_BASE = "https://api.opensubtitles.com/api/v1";
   try {
@@ -375,6 +370,7 @@ app.post('/api/subs', async (req, res) => {
       order_direction: "desc",
     });
 
+    // Step 1: Specificity in Search for TV episodes
     if (type === "tv" && season && episode) {
       params.append("season_number", season);
       params.append("episode_number", episode);
@@ -425,10 +421,11 @@ app.post('/api/subs', async (req, res) => {
           });
           const dlData = await dlRes.json();
           if (dlData.link) {
+            // Step 2: Subtitle Proxying (forces text/vtt + CORS for mobile)
             return {
               title: track.title,
               language: track.language,
-              uri: dlData.link
+              uri: `/api/proxy?url=${encodeURIComponent(dlData.link)}&type=sub`
             };
           }
           return null;
