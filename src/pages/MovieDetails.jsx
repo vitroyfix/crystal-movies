@@ -50,6 +50,8 @@ const [audioTracks, setAudioTracks] = useState([]);
 const [selectedAudio, setSelectedAudio] = useState("original");
 const [subtitleTracks, setSubtitleTracks] = useState([]);
 const [selectedSubtitle, setSelectedSubtitle] = useState(-1);
+const [qualityLevels, setQualityLevels] = useState([]);
+const [selectedQuality, setSelectedQuality] = useState(-1);
 const videoRef = useRef(null);
 const hlsRef = useRef(null);
 const progressInterval = useRef(null);
@@ -275,6 +277,8 @@ hlsRef.current.loadSource(cleanUrl);
 hlsRef.current.attachMedia(video);
 hlsRef.current.on(Hls.Events.MANIFEST_PARSED, () => {
 setAudioTracks(hlsRef.current.audioTracks);
+setQualityLevels(hlsRef.current.levels || []);
+setSelectedQuality(-1);
 attemptSeekAndPlay();
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -363,6 +367,17 @@ tracks[i].mode = i === index ? "showing" : "disabled";
       }
     }
   };
+const getQualityLabel = (index) => {
+  if (index === -1 || index >= qualityLevels.length || !qualityLevels[index]) return "Auto";
+  const level = qualityLevels[index];
+  return `${level.height}p`;
+};
+const selectQuality = (levelIndex) => {
+  setSelectedQuality(levelIndex);
+  if (hlsRef.current) {
+    hlsRef.current.currentLevel = levelIndex;
+  }
+};
 if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><RefreshCw className="animate-spin text-white" size={40} /></div>;
 if (!movie) return null;
 const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, cast, genre, language, votes, release_date, first_air_date } = movie;
@@ -498,6 +513,23 @@ return (
 <button onClick={toggleAudio} className="bg-black/70 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded text-[10px] uppercase font-bold hover:bg-red-600 transition-all">
                       Audio: {selectedAudio}
 </button>
+                  )}
+{qualityLevels.length > 0 && (
+<div className="relative group">
+<button className="bg-black/70 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded text-[10px] uppercase font-bold hover:bg-white/10 transition-all">
+                        Quality: {getQualityLabel(selectedQuality)}
+</button>
+<div className="absolute bottom-full right-0 mb-2 hidden group-hover:flex flex-col bg-black/90 backdrop-blur-xl border border-white/10 rounded overflow-hidden min-w-[160px] shadow-2xl">
+<button onClick={() => selectQuality(-1)} className={`px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${selectedQuality === -1 ? 'bg-red-600/20 text-red-500 font-black' : 'text-white/70'}`}>Auto</button>
+<div className="max-h-48 overflow-y-auto scrollbar-hide">
+{qualityLevels.map((level, i) => (
+<button key={i} onClick={() => selectQuality(i)} className={`w-full px-4 py-3 text-[10px] uppercase text-left hover:bg-red-600 transition-colors ${selectedQuality === i ? 'bg-red-600/20 text-red-500 font-black' : 'text-white/70'}`}>
+{level.height}p
+</button>
+                          ))}
+</div>
+</div>
+</div>
                   )}
 {subtitleTracks.length > 0 && (
 <div className="relative group">
