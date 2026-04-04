@@ -88,7 +88,7 @@ async function fetchWithRetry(url, options, retries = 2) {
   }
 }
 
-// --- 1. PROXY ROUTE (with Content-Type override + encoding safety + safe streaming) ---
+// --- 1. PROXY ROUTE (with TMDB key injection + Content-Type override + encoding safety + safe streaming) ---
 app.get('/api/proxy', async (req, res) => {
   const key = req.query.key;
   let targetUrl = req.query.url;
@@ -122,6 +122,23 @@ app.get('/api/proxy', async (req, res) => {
 
   if (!targetUrl) return res.status(400).send("No target URL resolved");
 
+  // ─── TMDB API KEY INJECTION (fixes 401 Unauthorized) ───────────────────────
+  // The real TMDB_API_KEY is injected server-side only. Never exposed to client.
+  if (targetUrl.includes('api.themoviedb.org')) {
+    try {
+      const tmdbUrl = new URL(targetUrl);
+      if (!tmdbUrl.searchParams.has('api_key')) {
+        if (!process.env.TMDB_API_KEY) {
+          return res.status(500).send("TMDB API key not configured on server.");
+        }
+        tmdbUrl.searchParams.set('api_key', process.env.TMDB_API_KEY);
+      }
+      targetUrl = tmdbUrl.toString();
+    } catch (e) {
+      // URL parsing failed — proceed with original URL (fallback)
+    }
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -139,8 +156,6 @@ app.get('/api/proxy', async (req, res) => {
 
     // Step 2: Encoding & Compression Safety
     // Do NOT forward Accept-Encoding from client → prevents double-zipping
-    // that triggers "Invalid URI / Media resource failed" in the browser.
-    // node-fetch handles decompression automatically.
     delete forwardedHeaders['accept-encoding'];
 
     const response = await fetchWithRetry(targetUrl, {
@@ -157,7 +172,6 @@ app.get('/api/proxy', async (req, res) => {
     // Step 1: Content-Type Overrides (Subtitle Fix)
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.query.type === 'sub') {
-      // Force exact header required by browser native subtitle engine
       res.setHeader('Content-Type', 'text/vtt');
     } else {
       res.setHeader('Content-Type', contentType);
@@ -203,8 +217,7 @@ app.get('/api/proxy', async (req, res) => {
       return res.send(rewrittenText);
     }
 
-    // Step 3: Secure Error Handling – wrap stream pipe so client disconnects
-    // (browser close, tab switch, etc.) never throw unhandled exceptions.
+    // Step 3: Secure Error Handling
     res.on('error', () => {});
     response.body.on('error', (err) => {
       if (!res.destroyed && !res.headersSent) {
@@ -298,7 +311,6 @@ app.post('/api/scrape-stream', async (req, res) => {
       await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.mouse.click(640, 360).catch(() => {});
 
-      // Step 4: Scraper Robustness – increased capture attempts + guaranteed clean 404
       let attempts = 0;
       while (!capturedUrl && attempts < 60) {
         await new Promise(r => setTimeout(r, 500));
@@ -460,7 +472,6 @@ app.get(/^\/(?!api).*/, (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => {
-  // Critical server-start message only (per requirements)
   console.log(`🚀 Server started on port ${PORT}`);
 });
 
