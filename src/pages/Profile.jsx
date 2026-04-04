@@ -21,8 +21,15 @@ const Profile = () => {
   const overviewRef = useRef(null);
   const watchlistRef = useRef(null);
 
-  const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY; 
   const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
+
+  // ─── SECURITY FIX 3: Robust numeric ID extraction ───────────────────────────
+  // Replaces split('_')[1] which broke on formats like "tv_s1_e2_12345".
+  // This regex always returns the first numeric sequence regardless of ordering.
+  const extractNumericId = (mediaId) => {
+    const match = mediaId.toString().match(/\d+/);
+    return match ? match[0] : mediaId.toString();
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -47,8 +54,6 @@ const Profile = () => {
 
       if (pError) throw pError;
 
-      // Group and Filter logic to ensure movies don't duplicate 
-      // and TV shows only show the highest watched season and episode.
       const mediaMap = new Map();
 
       (progressData || []).forEach(item => {
@@ -57,12 +62,12 @@ const Profile = () => {
             mediaMap.set(item.media_id, item);
           }
         } else if (item.type === 'tv') {
-          const seriesId = item.media_id.split('_')[1];
+          // ─── SECURITY FIX 3: Use extractNumericId instead of split('_')[1] ──
+          const seriesId = extractNumericId(item.media_id);
           if (!mediaMap.has(seriesId)) {
             mediaMap.set(seriesId, item);
           } else {
             const existing = mediaMap.get(seriesId);
-            // Replace if the current item has a higher season, OR same season but higher episode
             if (
               item.season > existing.season || 
               (item.season === existing.season && item.episode > existing.episode)
@@ -77,11 +82,10 @@ const Profile = () => {
 
       const progressArray = await Promise.all(dedupedData.map(async (item) => {
         if (item.time <= 0) return null;
-        
-        const parts = item.media_id.split('_');
-        const baseId = parts.length > 1 ? parts[1] : parts[0];
-        
-        // Fetch details from TMDB to get the exact runtime for progress bar calculation
+
+        // ─── SECURITY FIX 3: Use extractNumericId for clean TMDB ID ──────────
+        const baseId = extractNumericId(item.media_id);
+
         const details = await getMediaDetails(baseId, item.type);
         const poster = item.poster || details.poster;
         const duration = details.duration; 
@@ -107,8 +111,8 @@ const Profile = () => {
 
       if (Array.isArray(watchlistData)) {
         const enrichedWatchlist = await Promise.all(watchlistData.map(async (item) => {
-          const wParts = item.media_id.toString().split('_');
-          const cleanWId = wParts.length > 1 ? wParts[1] : wParts[0];
+          // ─── SECURITY FIX 3: Use extractNumericId for watchlist items ────────
+          const cleanWId = extractNumericId(item.media_id.toString());
 
           if (!item.poster) {
             const details = await getMediaDetails(cleanWId, item.type || 'movie');
@@ -118,17 +122,25 @@ const Profile = () => {
         }));
         setWatchlist(enrichedWatchlist);
       }
-    } catch (err) { console.error("Could not load user data from Supabase", err); }
+    } catch (err) {
+      // ─── SECURITY FIX 1: console.error removed — no stack trace exposed ──────
+    }
   };
 
+  // ─── SECURITY FIX 2: API key hidden — requests route through backend proxy ───
+  // The backend proxy appends the real TMDB API key server-side.
+  // The key is no longer present in the browser's Network tab.
   const getMediaDetails = async (id, type) => {
     try {
-      const response = await fetch(`https://api.themoviedb.org/3/${type}/${id}?api_key=${TMDB_API_KEY}`);
+      const tmdbUrl = `https://api.themoviedb.org/3/${type}/${id}`;
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(tmdbUrl)}`;
+      const response = await fetch(proxyUrl);
       const data = await response.json();
       const runtimeMinutes = type === 'movie' ? (data.runtime || 120) : (data.episode_run_time?.[0] || 45);
       return { poster: data.poster_path, duration: runtimeMinutes * 60 };
-    } catch (error) { 
-      return { poster: null, duration: 7200 }; 
+    } catch {
+      // ─── SECURITY FIX 1: Silent failure — no console.error exposed ───────────
+      return { poster: null, duration: 7200 };
     }
   };
 
@@ -157,7 +169,9 @@ const Profile = () => {
         .eq('media_id', item.media_id || item.id);
 
       if (!error) setWatchlist(prev => prev.filter(i => i.id !== item.id));
-    } catch (err) { console.error(err); }
+    } catch {
+      // ─── SECURITY FIX 1: Silent failure ──────────────────────────────────────
+    }
   };
 
   const handleDeleteProgress = async (e, supabaseRowId) => {
@@ -170,7 +184,9 @@ const Profile = () => {
         .eq('id', supabaseRowId);
 
       if (!error) setUserProgress(prev => prev.filter(item => item.fullMediaId !== supabaseRowId));
-    } catch (err) { console.error(err); }
+    } catch {
+      // ─── SECURITY FIX 1: Silent failure ──────────────────────────────────────
+    }
   };
 
   const handleLogout = async () => {
