@@ -100,7 +100,7 @@ const MovieDetails = () => {
         }
       }
     } catch (err) {
-      // Silenced error log for security
+      // Error logging silenced for security
     }
   };
 
@@ -144,7 +144,7 @@ const MovieDetails = () => {
         if (!error) setIsInList(true);
       }
     } catch (err) {
-      // Silenced error log for security
+      // Error logging silenced for security
     } finally {
       setIsSavingList(false);
     }
@@ -169,7 +169,7 @@ const MovieDetails = () => {
         { onConflict: "user_id, media_id" },
       );
     } catch (err) {
-      // Silenced error log for security
+      // Error logging silenced for security
     }
   };
 
@@ -218,7 +218,6 @@ const MovieDetails = () => {
         setError("Stream could not be found.");
       }
     } catch (err) {
-      console.error("Stream connection failed.");
       setError("Server is offline or encountered an error.");
     } finally {
       setIsCleaning(false);
@@ -243,7 +242,7 @@ const MovieDetails = () => {
         if (enIdx !== -1) setSelectedSubtitle(enIdx);
       }
     } catch (err) {
-      console.error("Subtitle fetch failed.");
+      // Error logging silenced for security
     }
   };
 
@@ -263,7 +262,6 @@ const MovieDetails = () => {
         const attemptSeekAndPlay = () => {
           const playVideo = () => {
             if (savedTime > 0) video.currentTime = savedTime;
-            // CRITICAL FIX: Safe Play Promise to stop DOMException crashes
             const playPromise = video.play();
             if (playPromise !== undefined) {
               playPromise.catch(e => {
@@ -308,7 +306,6 @@ const MovieDetails = () => {
       }, 10000);
     }
     
-    // CRITICAL FIX: Clean HLS destruction
     return () => {
       if (hlsRef.current) hlsRef.current.destroy();
       if (videoRef.current) {
@@ -330,7 +327,7 @@ const MovieDetails = () => {
           setSelectedSeason(firstSeason.season_number);
         }
       } catch (err) {
-        console.error("Movie load failed.");
+        // Error logging silenced
       } finally {
         setLoading(false);
       }
@@ -418,7 +415,7 @@ const MovieDetails = () => {
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><RefreshCw className="animate-spin text-white" size={40} /></div>;
   if (!movie) return null;
 
-  const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, cast, genre, language, votes, release_date, first_air_date } = movie;
+  const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, release_date, first_air_date, votes } = movie;
   const displayTitle = title || name;
   const displayImage = backdrop_path ? `https://image.tmdb.org/t/p/original${backdrop_path}` : `https://image.tmdb.org/t/p/original${poster_path}`;
 
@@ -554,7 +551,6 @@ const MovieDetails = () => {
               <div className="relative w-full h-full">
                 <video ref={videoRef} controls autoPlay playsInline crossOrigin="anonymous" className="w-full h-full object-contain bg-black">
                   {subtitleTracks.map((track, idx) => (
-                    {/* CRITICAL FIX: CORS Bypass via Proxy */}
                     <track 
                       key={idx} 
                       kind="subtitles" 
@@ -566,7 +562,6 @@ const MovieDetails = () => {
                   ))}
                 </video>
                 
-                {/* CRITICAL FIX: Always render Quality, z-[9999] layer bump */}
                 <div className="absolute bottom-20 md:bottom-24 right-4 md:right-8 flex flex-wrap gap-2 z-[9999] pointer-events-auto">
                   {audioTracks.length > 1 && (
                     <button onClick={toggleAudio} className="bg-black/80 backdrop-blur-xl border border-white/30 text-white px-4 py-2 rounded shadow-2xl text-[10px] uppercase font-bold hover:bg-red-600 transition-all">
