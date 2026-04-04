@@ -31,9 +31,6 @@ let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
   supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 }
-if (!supabase) {
-  console.error('Supabase not initialized. Check env vars.');
-}
 
 // Puppeteer setup
 puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
@@ -91,7 +88,7 @@ async function fetchWithRetry(url, options, retries = 2) {
   }
 }
 
-// --- 1. PROXY ROUTE ---
+// --- 1. PROXY ROUTE (with Content-Type override + encoding safety + safe streaming) ---
 app.get('/api/proxy', async (req, res) => {
   const key = req.query.key;
   let targetUrl = req.query.url;
@@ -103,7 +100,6 @@ app.get('/api/proxy', async (req, res) => {
       .select('url')
       .eq('key', key)
       .single();
-
     if (cacheData && cacheData.url) {
       let stored = cacheData.url;
       if (typeof stored === 'string' && stored.trim().startsWith('{') && stored.trim().endsWith('}')) {
@@ -127,7 +123,7 @@ app.get('/api/proxy', async (req, res) => {
   if (!targetUrl) return res.status(400).send("No target URL resolved");
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s internal timeout (safe under Vercel 60s)
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const forwardedHeaders = {
@@ -135,10 +131,17 @@ app.get('/api/proxy', async (req, res) => {
       'Referer': 'https://vidlink.pro/',
       'Origin': 'https://vidlink.pro/',
     };
+
     if (cookieString) {
       forwardedHeaders['Cookie'] = cookieString;
     }
     if (req.headers.range) forwardedHeaders['Range'] = req.headers.range;
+
+    // Step 2: Encoding & Compression Safety
+    // Do NOT forward Accept-Encoding from client → prevents double-zipping
+    // that triggers "Invalid URI / Media resource failed" in the browser.
+    // node-fetch handles decompression automatically.
+    delete forwardedHeaders['accept-encoding'];
 
     const response = await fetchWithRetry(targetUrl, {
       headers: forwardedHeaders,
@@ -146,11 +149,19 @@ app.get('/api/proxy', async (req, res) => {
     });
 
     clearTimeout(timeoutId);
+
     res.status(response.status);
 
     const contentType = response.headers.get('content-type') || "";
+
+    // Step 1: Content-Type Overrides (Subtitle Fix)
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', contentType);
+    if (req.query.type === 'sub') {
+      // Force exact header required by browser native subtitle engine
+      res.setHeader('Content-Type', 'text/vtt');
+    } else {
+      res.setHeader('Content-Type', contentType);
+    }
 
     if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
     if (response.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', response.headers.get('accept-ranges'));
@@ -192,6 +203,8 @@ app.get('/api/proxy', async (req, res) => {
       return res.send(rewrittenText);
     }
 
+    // Step 3: Secure Error Handling – wrap stream pipe so client disconnects
+    // (browser close, tab switch, etc.) never throw unhandled exceptions.
     res.on('error', () => {});
     response.body.on('error', (err) => {
       if (!res.destroyed && !res.headersSent) {
@@ -205,11 +218,11 @@ app.get('/api/proxy', async (req, res) => {
         response.body.destroy();
       }
     });
+
     response.body.pipe(res);
 
   } catch (err) {
     clearTimeout(timeoutId);
-    console.error(err);
     if (err.name === 'AbortError') {
       if (!res.headersSent) return res.status(504).send("Upstream timed out.");
       return;
@@ -218,7 +231,7 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
-// --- 2. SECURE ENCRYPTED SCRAPER ROUTE ---
+// --- 2. SECURE ENCRYPTED SCRAPER ROUTE (increased robustness) ---
 app.post('/api/scrape-stream', async (req, res) => {
   const encryptedPayload = req.body.data;
   if (!encryptedPayload) return res.status(400).json({ error: "Invalid request payload." });
@@ -232,6 +245,7 @@ app.post('/api/scrape-stream', async (req, res) => {
 
     const { id, type, s, e } = JSON.parse(decryptedString);
     if (!id || !type) return res.status(400).json({ error: "Invalid request payload." });
+
     if (!supabase) return res.status(500).json({ error: "Service unavailable." });
 
     const cacheKey = `${id}-${type}-${s || ''}-${e || ''}`;
@@ -284,8 +298,9 @@ app.post('/api/scrape-stream', async (req, res) => {
       await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.mouse.click(640, 360).catch(() => {});
 
+      // Step 4: Scraper Robustness – increased capture attempts + guaranteed clean 404
       let attempts = 0;
-      while (!capturedUrl && attempts < 40) {
+      while (!capturedUrl && attempts < 60) {
         await new Promise(r => setTimeout(r, 500));
         attempts++;
       }
@@ -297,8 +312,8 @@ app.post('/api/scrape-stream', async (req, res) => {
 
       const cookies = await page.cookies();
       const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-
       const expiresAt = new Date(Date.now() + 3600000).toISOString();
+
       await supabase.from('streams').upsert({
         key: cacheKey,
         url: JSON.stringify({ url: videoUrl, cookie: cookieString }),
@@ -308,7 +323,6 @@ app.post('/api/scrape-stream', async (req, res) => {
 
     res.json({ success: true, url: `/api/proxy?key=${encodeURIComponent(cacheKey)}` });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, error: "An unexpected server error occurred." });
   } finally {
     if (page) await page.close().catch(() => {});
@@ -348,6 +362,7 @@ app.post('/api/subs', async (req, res) => {
       order_by: "download_count",
       order_direction: "desc",
     });
+
     if (type === "tv" && season && episode) {
       params.append("season_number", season);
       params.append("episode_number", episode);
@@ -362,6 +377,7 @@ app.post('/api/subs', async (req, res) => {
     });
 
     const searchData = await searchRes.json();
+
     let tracksToDownload = [];
     if (searchData.data && searchData.data.length > 0) {
       const sorted = searchData.data.sort((a, b) => {
@@ -370,6 +386,7 @@ app.post('/api/subs', async (req, res) => {
         if (bT !== aT) return bT - aT;
         return b.attributes.download_count - a.attributes.download_count;
       });
+
       const seenLanguages = new Set();
       for (const item of sorted) {
         const attrs = item.attributes;
@@ -410,7 +427,9 @@ app.post('/api/subs', async (req, res) => {
     );
 
     clearTimeout(subsTimeoutId);
+
     const finalTracks = downloadResults.filter(Boolean);
+
     const encryptedResponse = CryptoJS.AES.encrypt(
       JSON.stringify({ tracks: finalTracks }),
       SECRET_KEY
@@ -418,7 +437,6 @@ app.post('/api/subs', async (req, res) => {
 
     res.status(200).json({ data: encryptedResponse });
   } catch (error) {
-    console.error(error);
     if (error.name === 'AbortError') {
       return res.status(504).json({ error: "Service temporarily unavailable." });
     }
@@ -441,6 +459,9 @@ app.get(/^\/(?!api).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0');
+app.listen(PORT, '0.0.0.0', () => {
+  // Critical server-start message only (per requirements)
+  console.log(`🚀 Server started on port ${PORT}`);
+});
 
 export default app;
