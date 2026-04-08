@@ -22,6 +22,7 @@
     "framer-motion": "^12.33.0",
     "hls.js": "^1.6.15",
     "lucide-react": "^0.541.0",
+    "playwright": "^1.59.1",
     "puppeteer-core": "^24.38.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-adblocker": "^2.13.6",

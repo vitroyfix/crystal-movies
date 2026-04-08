@@ -17,6 +17,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-football/, ''),
       },
+      // NEW: Proxies your movie player '/api' requests to your VPS Backend
+      '/api': {
+        target: 'http://34.35.21.57:8080', 
+        changeOrigin: true,
+        secure: false,
+      }
     },
   },
   build: {
