@@ -19,7 +19,7 @@ export default defineConfig({
       },
       // NEW: Proxies your movie player '/api' requests to your VPS Backend
       '/api': {
-        target: 'https://crystalmovies.vercel.app/', 
+        target: 'https://reaching-showing-press-selections.trycloudflare.com/', 
         changeOrigin: true,
         secure: false,
       }
