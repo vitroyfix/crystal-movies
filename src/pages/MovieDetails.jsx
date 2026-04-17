@@ -506,7 +506,7 @@ const MovieDetails = () => {
               <div className="relative w-full h-full">
                 <video ref={videoRef} controls autoPlay playsInline crossOrigin="anonymous" className="w-full h-full object-contain bg-black">
                   {subtitleTracks.map((track, idx) => (
-                    <track key={idx} kind="subtitles" src={`${BACKEND_URL.replace('/api/scrape-stream', '')}/api/proxy?url=${encodeURIComponent(track.uri)}&type=sub`} label={track.title} srcLang={track.language} default={idx === selectedSubtitle} />
+                    <track key={idx} kind="subtitles" src={`${BACKEND_URL.replace('/api/scrape-stream', '')}${track.uri}`} label={track.title} srcLang={track.language} default={idx === selectedSubtitle} />
                   ))}
                 </video>
 
