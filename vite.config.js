@@ -19,7 +19,7 @@ export default defineConfig({
       },
       // NEW: Proxies your movie player '/api' requests to your VPS Backend
       '/api': {
-        target: 'http://34.35.21.57:8080', 
+        target: 'https://crystalmovies.vercel.app/', 
         changeOrigin: true,
         secure: false,
       }
