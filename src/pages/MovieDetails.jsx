@@ -25,8 +25,8 @@ import CryptoJS from "crypto-js";
 import { supabase } from "../../src/services/supabaseClient";
 
 // Update this to your GCP IP when deploying to South Africa
-const BACKEND_URL = "https://crystalmovies.vercel.app/api/scrape-stream";
-const SUBS_URL = "https://crystalmovies.vercel.app/api/subs";
+const BACKEND_URL = "http://34.35.21.57/api/scrape-stream";
+const SUBS_URL = "http://34.35.21.57/api/subs";
 const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY;
 
 const MovieDetails = () => {
