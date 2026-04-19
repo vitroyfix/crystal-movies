@@ -1,184 +1,412 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import MovieCard from "./MovieCard.jsx";
-import { fetchTrending, fetchMovies, fetchByGenre } from "../../services/api.js"; 
-import { Home, ArrowLeft } from "lucide-react"; // Import icons for a professional look
+import {
+  fetchTrending,
+  fetchTopRatedMovies,
+  fetchRecentMovies,
+  fetchByGenre,
+} from "../../services/api.js";
+import {
+  Home,
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  SlidersHorizontal,
+} from "lucide-react";
 
+// ── Genre map (expanded) ──────────────────────────────────────────────────────
+const GENRES = [
+  { name: "Action", id: 28 },
+  { name: "Adventure", id: 12 },
+  { name: "Animation", id: 16 },
+  { name: "Comedy", id: 35 },
+  { name: "Crime", id: 80 },
+  { name: "Documentary", id: 99 },
+  { name: "Drama", id: 18 },
+  { name: "Family", id: 10751 },
+  { name: "Fantasy", id: 14 },
+  { name: "History", id: 36 },
+  { name: "Horror", id: 27 },
+  { name: "Music", id: 10402 },
+  { name: "Mystery", id: 9648 },
+  { name: "Romance", id: 10749 },
+  { name: "Sci-Fi", id: 878 },
+  { name: "Sport", id: 9805 },
+  { name: "Superhero", id: 10767 },
+  { name: "Thriller", id: 53 },
+  { name: "War", id: 10752 },
+  { name: "Western", id: 37 },
+  { name: "Kids & TV", id: 10762 },
+  { name: "Reality", id: 10764 },
+  { name: "Talk Show", id: 10767 },
+];
+
+// ── Dedupe within a single array ──────────────────────────────────────────────
+const dedup = (arr) => {
+  const seen = new Set();
+  return arr.filter((item) =>
+    seen.has(item.id) ? false : seen.add(item.id)
+  );
+};
+
+// ── Skeleton card ─────────────────────────────────────────────────────────────
+const SkeletonCard = () => (
+  <div
+    className="rounded-lg overflow-hidden animate-pulse"
+    style={{
+      aspectRatio: "2/3",
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(255,255,255,0.05)",
+    }}
+  >
+    <div className="w-full h-full bg-gradient-to-br from-white/5 to-transparent" />
+  </div>
+);
+
+// ── Horizontal scrollable row ─────────────────────────────────────────────────
+const MovieRow = ({ title, data, loading }) => {
+  const scrollRef = useRef(null);
+  const scroll = (dir) =>
+    scrollRef.current?.scrollBy({ left: dir * 340, behavior: "smooth" });
+
+  return (
+    <div className="space-y-4 group/row">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-3 text-sm md:text-base font-black uppercase tracking-widest text-white">
+          <span className="w-[3px] h-5 rounded-full bg-red-600 flex-shrink-0" />
+          {title}
+        </h2>
+        <div className="flex items-center gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity duration-200">
+          <button
+            onClick={() => scroll(-1)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-white/30 hover:text-white hover:bg-white/10 transition-all"
+            style={{ border: "1px solid rgba(255,255,255,0.07)" }}
+          >
+            <ChevronLeft size={13} />
+          </button>
+          <button
+            onClick={() => scroll(1)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-white/30 hover:text-white hover:bg-white/10 transition-all"
+            style={{ border: "1px solid rgba(255,255,255,0.07)" }}
+          >
+            <ChevronRight size={13} />
+          </button>
+        </div>
+      </div>
+
+      <div
+        ref={scrollRef}
+        className="flex gap-3 overflow-x-auto pb-3 snap-x snap-mandatory"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {loading
+          ? Array.from({ length: 10 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex-none snap-start"
+                style={{ width: 148 }}
+              >
+                <SkeletonCard />
+              </div>
+            ))
+          : data.map((item, i) => (
+              <div
+                key={`${item.id}-${i}`}
+                className="flex-none snap-start"
+                style={{ width: 148 }}
+              >
+                <MovieCard {...item} />
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+};
+
+// ── Main component ────────────────────────────────────────────────────────────
 const MovieGrid = () => {
-  const genreMap = {
-    "Action": 28, "Animation": 16, "Romance": 10749, "Comedy": 35, "Horror": 27,
-    "Adventure": 12, "Sci-fi": 878, "Drama": 18, "Thriller": 53
-  };
-
-  const buttons = Object.keys(genreMap);
-
   const [trending, setTrending] = useState([]);
   const [topRated, setTopRated] = useState([]);
   const [recentlyAdded, setRecentlyAdded] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [selectedGenre, setSelectedGenre] = useState(null);
   const [genreMovies, setGenreMovies] = useState([]);
   const [isFiltering, setIsFiltering] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalResults, setTotalResults] = useState(0);
 
+  const sentinelRef = useRef(null);
+  const observerRef = useRef(null);
+  const loadingRef = useRef(false);
+
+  // ── Initial rows ───────────────────────────────────────────────────────────
   useEffect(() => {
-    async function loadMovies() {
-      const [trendingData, topRatedData, recentlyAddedData] = await Promise.all([
-        fetchTrending(),
-        fetchMovies(),
-        fetchMovies(),
-      ]);
-
-      setTrending(trendingData);
-      setTopRated(topRatedData);
-      setRecentlyAdded(recentlyAddedData);
-      setLoading(false);
-    }
-    loadMovies();
+    (async () => {
+      try {
+        const [t, tr, r] = await Promise.all([
+          fetchTrending(),
+          fetchTopRatedMovies(),
+          fetchRecentMovies(),
+        ]);
+        // Dedupe each row independently — no cross-array filtering
+        setTrending(dedup(t));
+        setTopRated(dedup(tr));
+        setRecentlyAdded(dedup(r));
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  // Function to Reset everything and go back to the "Home" view
-  const resetToHome = () => {
-    setSelectedGenre(null);
-    setGenreMovies([]);
-    setCurrentPage(1);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+  // ── IntersectionObserver wiring ────────────────────────────────────────────
+  const setupObserver = useCallback(() => {
+    if (observerRef.current) observerRef.current.disconnect();
 
-  const handleGenreClick = async (genreName) => {
-    if (selectedGenre === genreName) {
+    observerRef.current = new IntersectionObserver(
+      async (entries) => {
+        if (!entries[0].isIntersecting) return;
+        if (loadingRef.current) return;
+
+        loadingRef.current = true;
+        setLoadingMore(true);
+
+        try {
+          setCurrentPage((prev) => {
+            const nextPage = prev + 1;
+            setGenreMovies((prevMovies) => {
+              const existingIds = new Set(prevMovies.map((m) => m.id));
+              setSelectedGenre((prevGenre) => {
+                const genre = GENRES.find((g) => g.name === prevGenre);
+                if (!genre) return prevGenre;
+
+                fetchByGenre(genre.id, nextPage)
+                  .then((data) => {
+                    const fresh = data.filter((m) => !existingIds.has(m.id));
+                    if (!fresh.length) {
+                      setHasMore(false);
+                    } else {
+                      setGenreMovies((pm) => [...pm, ...fresh]);
+                    }
+                    loadingRef.current = false;
+                    setLoadingMore(false);
+                  })
+                  .catch(() => {
+                    loadingRef.current = false;
+                    setLoadingMore(false);
+                  });
+                return prevGenre;
+              });
+              return prevMovies;
+            });
+            return nextPage;
+          });
+        } catch {
+          loadingRef.current = false;
+          setLoadingMore(false);
+        }
+      },
+      { rootMargin: "300px" },
+    );
+
+    if (sentinelRef.current) observerRef.current.observe(sentinelRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (selectedGenre && hasMore && !isFiltering) {
+      setupObserver();
+    } else {
+      observerRef.current?.disconnect();
+    }
+    return () => observerRef.current?.disconnect();
+  }, [selectedGenre, hasMore, isFiltering, setupObserver]);
+
+  // ── Genre click ────────────────────────────────────────────────────────────
+  const handleGenreClick = async (genre) => {
+    if (selectedGenre === genre.name) {
       resetToHome();
       return;
     }
 
-    setSelectedGenre(genreName);
+    observerRef.current?.disconnect();
+    loadingRef.current = false;
+
+    setSelectedGenre(genre.name);
     setIsFiltering(true);
     setCurrentPage(1);
+    setGenreMovies([]);
+    setHasMore(true);
+    setTotalResults(0);
+
     try {
-      const genreId = genreMap[genreName];
-      const data = await fetchByGenre(genreId, 1);
+      const data = await fetchByGenre(genre.id, 1);
       setGenreMovies(data);
-      setHasMore(data.length > 0);
-    } catch (err) {
-      console.error("Genre fetch failed", err);
+      setHasMore(data.length >= 20);
+      setTotalResults(data.length);
+    } catch (e) {
+      console.error(e);
     } finally {
       setIsFiltering(false);
     }
   };
 
-  const loadMore = async () => {
-    const nextPage = currentPage + 1;
-    const genreId = genreMap[selectedGenre];
-    try {
-      const newData = await fetchByGenre(genreId, nextPage);
-      if (newData.length === 0) {
-        setHasMore(false);
-      } else {
-        setGenreMovies((prev) => [...prev, ...newData]);
-        setCurrentPage(nextPage);
-      }
-    } catch (err) {
-      console.error("Load more failed", err);
-    }
+  const resetToHome = () => {
+    observerRef.current?.disconnect();
+    loadingRef.current = false;
+    setSelectedGenre(null);
+    setGenreMovies([]);
+    setCurrentPage(1);
+    setHasMore(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  if (loading) return <p className="text-white text-center py-10 font-black uppercase tracking-widest">Loading content...</p>;
-
-  const MovieRow = ({ title, data }) => (
-    <div className="space-y-4">
-      <h2 className="text-xl md:text-2xl font-black uppercase tracking-tighter border-l-4 border-red-600 pl-4">{title}</h2>
-      <div className="flex overflow-x-auto md:grid md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 pb-6 md:pb-0 no-scrollbar snap-x">
-        {data.map((item, index) => (
-          <div key={`${item.id}-${index}`} className="min-w-[160px] md:min-w-0 snap-start">
-            <MovieCard {...item} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
   return (
-    <section className="px-6 md:px-12 py-10 bg-black text-white space-y-16">
-      
-      {/* 1. Header with Reset Button when Filtering */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-        <div>
-          <h2 className="text-xl md:text-2xl font-black uppercase tracking-tighter border-l-4 border-red-600 pl-4 mb-2">
-            {selectedGenre ? `Category: ${selectedGenre}` : "Browse by Genre"}
-          </h2>
-          <p className="text-gray-400 text-xs md:text-sm uppercase tracking-widest">
-            {selectedGenre ? `Showing the best of ${selectedGenre}` : "Discover movies and TV shows tailored to your taste"}
+    <section
+      className="px-6 md:px-14 lg:px-20 py-12 bg-[#070707] text-white space-y-12"
+      style={{ fontFamily: "'DM Sans', sans-serif" }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700;900&display=swap');
+        @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        .grid-in  { animation: fadeUp 0.4s ease forwards; }
+        .no-sb::-webkit-scrollbar { display:none }
+        .no-sb { -ms-overflow-style:none; scrollbar-width:none }
+
+        @keyframes shimmer {
+          0%   { background-position: -400px 0 }
+          100% { background-position:  400px 0 }
+        }
+        .skeleton-shine {
+          background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.03) 75%);
+          background-size: 400px 100%;
+          animation: shimmer 1.4s infinite linear;
+        }
+      `}</style>
+
+      {/* ── Section header ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <p className="text-[9px] uppercase tracking-[0.35em] text-white/20 font-black">
+            {selectedGenre
+              ? `Genre · ${genreMovies.length} titles loaded`
+              : "Discover"}
           </p>
+          <h2 className="text-xl md:text-2xl font-black uppercase tracking-tight text-white flex items-center gap-3">
+            <span className="w-[3px] h-6 rounded-full bg-red-600" />
+            {selectedGenre ?? "Browse by Genre"}
+          </h2>
         </div>
 
         {selectedGenre && (
-          <button 
+          <button
             onClick={resetToHome}
-            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-red-600 hover:text-white transition-colors"
+            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/30 hover:text-red-500 transition-colors"
           >
-            <ArrowLeft size={16} /> Return to Home
+            <ArrowLeft size={12} /> All Genres
           </button>
         )}
       </div>
 
-      {/* 2. Genre Buttons */}
-      <div className="flex overflow-x-auto no-scrollbar gap-3 pb-2">
-        {buttons.map((genre, index) => (
-          <button 
-            key={index} 
-            onClick={() => handleGenreClick(genre)}
-            className={`flex-none px-6 py-2 border rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${
-              selectedGenre === genre 
-              ? "bg-red-600 border-red-600 text-white" 
-              : "bg-zinc-900 border-white/10 hover:bg-red-600 hover:border-red-600"
-            }`}
-          >
-            {genre}
-          </button>
-        ))}
+      {/* ── Genre pills ────────────────────────────────────────────────────── */}
+      <div className="flex gap-2 overflow-x-auto no-sb pb-1 -mx-6 px-6 md:mx-0 md:px-0 md:flex-wrap">
+        {GENRES.map((genre) => {
+          const active = selectedGenre === genre.name;
+          return (
+            <button
+              key={genre.name}
+              onClick={() => handleGenreClick(genre)}
+              className="flex-none flex items-center gap-1.5 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all duration-200"
+              style={{
+                background: active ? "#e50914" : "rgba(255,255,255,0.04)",
+                border: active
+                  ? "1px solid #e50914"
+                  : "1px solid rgba(255,255,255,0.08)",
+                color: active ? "#fff" : "rgba(255,255,255,0.4)",
+                boxShadow: active ? "0 4px 18px rgba(229,9,20,0.35)" : "none",
+                transform: active ? "scale(1.05)" : "scale(1)",
+              }}
+            >
+              <span className="text-[11px]">{genre.emoji}</span>
+              {genre.name}
+            </button>
+          );
+        })}
       </div>
 
-      {/* 3. Results / Home Logic */}
+      {/* ── Content area ──────────────────────────────────────────────────── */}
       {selectedGenre ? (
-        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-8">
           {isFiltering ? (
-             <div className="py-20 text-center"><p className="text-red-600 font-black animate-pulse uppercase tracking-widest text-sm">Filtering...</p></div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 md:gap-4">
+              {Array.from({ length: 21 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="skeleton-shine rounded-lg"
+                  style={{ aspectRatio: "2/3" }}
+                />
+              ))}
+            </div>
           ) : (
-             <>
-               <MovieRow title={`${selectedGenre} Results`} data={genreMovies} />
-               
-               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-8">
-                 {hasMore && (
-                   <button 
-                    onClick={loadMore}
-                    className="w-full sm:w-auto px-12 py-4 bg-white text-black text-xs font-black uppercase tracking-[0.3em] hover:bg-red-600 hover:text-white transition-all rounded-sm"
-                   >
-                     Load More
-                   </button>
-                 )}
-                 <button 
-                  onClick={resetToHome}
-                  className="w-full sm:w-auto px-12 py-4 bg-zinc-900 text-white text-xs font-black uppercase tracking-[0.3em] hover:bg-zinc-800 transition-all rounded-sm border border-white/10 flex items-center justify-center gap-2"
-                 >
-                   <Home size={14} /> Back to Home
-                 </button>
-               </div>
-             </>
+            <>
+              <div className="grid-in grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 md:gap-4">
+                {genreMovies.map((item, i) => (
+                  <MovieCard key={`${item.id}-${i}`} {...item} />
+                ))}
+              </div>
+
+              {hasMore && (
+                <div
+                  ref={sentinelRef}
+                  className="flex flex-col items-center gap-3 py-8"
+                >
+                  {loadingMore && (
+                    <>
+                      <div className="w-8 h-8 rounded-full border-2 border-t-red-600 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+                      <p className="text-[9px] uppercase tracking-[0.3em] text-white/20 font-black">
+                        Loading more…
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {!hasMore && genreMovies.length > 0 && (
+                <div className="flex flex-col items-center gap-4 py-10">
+                  <div className="w-12 h-px bg-red-600/40" />
+                  <p className="text-[9px] uppercase tracking-[0.35em] text-white/20 font-black">
+                    All {genreMovies.length} results loaded
+                  </p>
+                  <button
+                    onClick={resetToHome}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-all"
+                    style={{
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      background: "rgba(255,255,255,0.03)",
+                    }}
+                  >
+                    <Home size={11} /> Browse other genres
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
-        <>
-          <MovieRow title="Trending Movies & TV Shows" data={trending} />
-          <MovieRow title="Top Rated Movies" data={topRated} />
-          <MovieRow title="Recently Added Movies" data={recentlyAdded} />
-        </>
+        <div className="space-y-14">
+          <MovieRow title="Trending Now" data={trending} loading={loading} />
+          <MovieRow title="Top Rated" data={topRated} loading={loading} />
+          <MovieRow
+            title="Recently Added"
+            data={recentlyAdded}
+            loading={loading}
+          />
+        </div>
       )}
-
-      <style jsx="true">{`
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
     </section>
   );
 };

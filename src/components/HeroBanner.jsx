@@ -1,209 +1,376 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { fetchTrending, fetchMovieDetails } from "../services/api";
-import { Play, Info } from "lucide-react";
+import { Play, Info, Star, ChevronLeft, ChevronRight, Volume2, VolumeX } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-const HeroBanner = () => {
-  const [trendingItems, setTrendingItems] = useState([]);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+const IMG = "https://image.tmdb.org/t/p";
 
+const HeroBanner = () => {
+  const [trendingItems,  setTrendingItems]  = useState([]);
+  const [activeIndex,    setActiveIndex]    = useState(0);
+  const [prevIndex,      setPrevIndex]      = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [transitioning,  setTransitioning]  = useState(false);
+  const [isPaused,       setIsPaused]       = useState(false);
+  const [progress,       setProgress]       = useState(0);
+
+  const intervalRef   = useRef(null);
+  const progressRef   = useRef(null);
+  const progressStart = useRef(null);
+  const navigate      = useNavigate();
+
+  const DURATION = 8000; // ms per slide
+
+  // ── Data loading ──────────────────────────────────────────────────────────
   useEffect(() => {
-    const loadTrending = async () => {
+    (async () => {
       try {
         const data = await fetchTrending();
-        // STRICT LIMIT TO FIRST 5 MOVIES/TV SHOWS
         const firstFive = data.slice(0, 5);
-
-        // Fetch full plot/details for the 5 selected items
-        const enrichedItems = await Promise.all(
+        const enriched = await Promise.all(
           firstFive.map(async (item) => {
             const details = await fetchMovieDetails(item.id, item.mediaType);
-
-            if (details && details.plot) {
-              // Word count limit logic: split into words, take first 20, join back together
+            if (details?.plot) {
               const words = details.plot.split(" ");
-              if (words.length > 20) {
-                details.plot = words.slice(0, 20).join(" ") + "...";
-              }
+              if (words.length > 22) details.plot = words.slice(0, 22).join(" ") + "…";
             }
-
             return details || item;
-          }),
+          })
         );
-
-        setTrendingItems(enrichedItems);
-      } catch (error) {
-        console.error("Error loading trending items:", error);
+        setTrendingItems(enriched);
+      } catch (e) {
+        console.error(e);
       } finally {
         setLoading(false);
       }
-    };
-    loadTrending();
+    })();
   }, []);
 
-  // AUTOMATIC ROTATION
+  // ── Transition helper ─────────────────────────────────────────────────────
+  const goTo = useCallback((nextIdx) => {
+    if (transitioning) return;
+    setTransitioning(true);
+    setPrevIndex(activeIndex);
+    setTimeout(() => {
+      setActiveIndex(nextIdx);
+      setPrevIndex(null);
+      setTransitioning(false);
+    }, 600);
+    setProgress(0);
+    progressStart.current = performance.now();
+  }, [transitioning, activeIndex]);
+
+  // ── Auto-rotation ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (trendingItems.length === 0) return;
-    const interval = setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % trendingItems.length);
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [trendingItems]);
+    if (!trendingItems.length || isPaused) return;
+    intervalRef.current = setInterval(() => {
+      goTo((activeIndex + 1) % trendingItems.length);
+    }, DURATION);
+    return () => clearInterval(intervalRef.current);
+  }, [trendingItems, activeIndex, isPaused, goTo]);
 
-  if (loading) {
-    return (
-      <div className="min-h-[75vh] flex items-center justify-center text-white bg-black uppercase tracking-widest font-black">
-        Loading...
+  // ── Progress bar animation ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (isPaused || !trendingItems.length) return;
+    setProgress(0);
+    progressStart.current = performance.now();
+
+    const tick = (now) => {
+      const elapsed = now - (progressStart.current || now);
+      setProgress(Math.min((elapsed / DURATION) * 100, 100));
+      progressRef.current = requestAnimationFrame(tick);
+    };
+    progressRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(progressRef.current);
+  }, [activeIndex, isPaused, trendingItems.length]);
+
+  const handleNavigate = (movie) => navigate(`/movie/${movie.id}/${movie.mediaType}`);
+
+  // ── Loading ───────────────────────────────────────────────────────────────
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-[#070707]">
+      <div className="relative w-16 h-16">
+        <div className="absolute inset-0 rounded-full border-2 border-red-600/20 animate-ping" />
+        <div className="absolute inset-0 rounded-full border-2 border-t-red-600 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
       </div>
-    );
-  }
+    </div>
+  );
 
-  if (trendingItems.length === 0) return null;
+  if (!trendingItems.length) return null;
 
-  const currentMovie = trendingItems[activeIndex];
-
-  const handleNavigation = (movie) => {
-    navigate(`/movie/${movie.id}/${movie.mediaType}`);
-  };
+  const current = trendingItems[activeIndex];
+  const prev    = prevIndex !== null ? trendingItems[prevIndex] : null;
+  const rating  = parseFloat(current.rating) || 0;
 
   return (
-    <section className="relative min-h-screen w-full text-white flex flex-col justify-end pb-12 overflow-hidden">
-      {/* DYNAMIC BACKGROUND - OPTIMIZED FOR DESKTOP VISUALS */}
-      <div className="absolute top-0 left-0 w-full h-full -z-10 bg-black">
-        <img
-          key={currentMovie.id}
-          src={currentMovie.poster.replace("w500", "original")}
-          alt={currentMovie.title}
-          className="w-full h-full object-cover object-center md:object-[center_20%] opacity-60 transition-all duration-1000 ease-in-out animate-in fade-in"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/20 to-transparent" />
+    <section
+      className="hero-root relative w-full overflow-hidden bg-[#070707]"
+      style={{ minHeight: "100svh" }}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,700;0,9..40,900&family=Playfair+Display:ital,wght@0,700;0,900;1,400&display=swap');
+
+        .hero-root { font-family: 'DM Sans', sans-serif; }
+        .hero-display { font-family: 'Playfair Display', serif; }
+
+        /* Slide transitions */
+        @keyframes heroFadeIn {
+          from { opacity: 0; transform: scale(1.06); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes heroFadeOut {
+          from { opacity: 1; transform: scale(1); }
+          to   { opacity: 0; transform: scale(0.97); }
+        }
+        @keyframes contentIn {
+          from { opacity: 0; transform: translateY(28px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes contentIn2 {
+          from { opacity: 0; transform: translateY(18px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .img-enter { animation: heroFadeIn 0.7s cubic-bezier(.4,0,.2,1) forwards; }
+        .img-exit  { animation: heroFadeOut 0.5s cubic-bezier(.4,0,.2,1) forwards; position: absolute; inset: 0; }
+
+        .content-line-1 { opacity: 0; animation: contentIn  0.7s cubic-bezier(.4,0,.2,1) 0.15s forwards; }
+        .content-line-2 { opacity: 0; animation: contentIn2 0.7s cubic-bezier(.4,0,.2,1) 0.28s forwards; }
+        .content-line-3 { opacity: 0; animation: contentIn2 0.7s cubic-bezier(.4,0,.2,1) 0.38s forwards; }
+        .content-line-4 { opacity: 0; animation: contentIn2 0.7s cubic-bezier(.4,0,.2,1) 0.48s forwards; }
+
+        /* Scanlines */
+        .scanlines::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.025) 3px, rgba(0,0,0,0.025) 4px);
+          pointer-events: none;
+          z-index: 2;
+        }
+
+        /* Thumbnail hover */
+        .thumb-card { transition: all 0.4s cubic-bezier(.4,0,.2,1); }
+        .thumb-card:hover { transform: translateY(-6px); }
+
+        /* Progress bar */
+        .prog-track { background: rgba(255,255,255,0.08); }
+        .prog-fill  { background: #e50914; transition: width 0.05s linear; }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+
+      {/* ── Backdrop images ──────────────────────────────────────────────── */}
+      <div className="scanlines absolute inset-0 w-full h-full">
+        {/* Exiting image */}
+        {prev && (
+          <div key={`exit-${prev.id}`} className="img-exit w-full h-full">
+            <img
+              src={(prev.backdrop || prev.poster || "").replace("w500", "original")}
+              alt=""
+              className="w-full h-full object-cover object-center"
+              style={{ opacity: 0.65 }}
+            />
+          </div>
+        )}
+
+        {/* Active image */}
+        <div key={`enter-${current.id}`} className="img-enter w-full h-full">
+          <img
+            src={(current.backdrop_path
+              ? `${IMG}/original${current.backdrop_path}`
+              : (current.poster || "").replace("w500", "original")
+            )}
+            alt={current.title}
+            className="w-full h-full object-cover object-center"
+            style={{ opacity: 0.65 }}
+          />
+        </div>
+
+        {/* Gradient layers */}
+        <div className="absolute inset-0 z-10" style={{ background: "linear-gradient(to right, rgba(7,7,7,0.97) 25%, rgba(7,7,7,0.5) 60%, rgba(7,7,7,0.15) 100%)" }} />
+        <div className="absolute inset-0 z-10" style={{ background: "linear-gradient(to top, #070707 0%, rgba(7,7,7,0.6) 30%, transparent 65%)" }} />
+        <div className="absolute inset-0 z-10" style={{ background: "radial-gradient(ellipse at 15% 55%, rgba(229,9,20,0.07) 0%, transparent 55%)" }} />
       </div>
 
-      {/* HERO CONTENT AREA */}
-      <div className="px-6 md:px-12 lg:px-16 w-full space-y-8">
-        {/* Dynamic Text Details - PLOT CAPPED AT 20 WORDS */}
-        <div className="max-w-4xl space-y-4 animate-in slide-in-from-left duration-700">
-          <h1 className="text-4xl md:text-6xl lg:text-8xl font-black uppercase tracking-tighter leading-none drop-shadow-2xl">
-            {currentMovie.title}
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <div className="relative z-20 flex flex-col justify-between min-h-[100svh] px-6 md:px-14 lg:px-20 pt-28 pb-10">
+
+        {/* Hero text block */}
+        <div className="flex-1 flex flex-col justify-center max-w-2xl gap-5">
+
+          {/* Eyebrow */}
+          <div key={`eye-${current.id}`} className="content-line-1 flex items-center gap-3">
+            <div className="flex gap-1">
+              {Array.from({ length: 5 }, (_, i) => (
+                <Star key={i} size={11} className={i < Math.floor(rating / 2) ? "fill-red-500 text-red-500" : "text-white/15"} />
+              ))}
+            </div>
+            {rating > 0 && <span className="text-[10px] font-black text-white/40 tracking-widest">{rating.toFixed(1)} / 10</span>}
+            <span className="w-px h-3 bg-white/15" />
+            <span className="text-[9px] font-black uppercase tracking-[0.25em] text-red-500">
+              {current.mediaType === "tv" ? "Series" : "Film"}
+            </span>
+            {current.badgeYear && (
+              <>
+                <span className="w-px h-3 bg-white/15" />
+                <span className="text-[10px] text-white/30 tracking-widest">{current.badgeYear}</span>
+              </>
+            )}
+          </div>
+
+          {/* Title */}
+          <h1 key={`title-${current.id}`} className="content-line-2 hero-display text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black leading-[0.95] tracking-tight text-white">
+            {current.title}
           </h1>
-          <p className="text-sm md:text-lg text-gray-200 leading-relaxed max-w-3xl drop-shadow-lg font-medium">
-            {currentMovie.plot}
+
+          {/* Plot */}
+          <p key={`plot-${current.id}`} className="content-line-3 text-sm md:text-base leading-relaxed text-white/55 max-w-lg">
+            {current.plot}
           </p>
 
-          <div className="flex items-center gap-4 pt-4">
-            <button
-              onClick={() => handleNavigation(currentMovie)}
-              className="flex items-center gap-2 bg-red-600 text-white px-6 md:px-10 py-2.5 md:py-3 rounded-sm hover:bg-red-700 transition-all font-black uppercase tracking-widest text-xs md:text-sm"
-            >
-              <Play size={18} fill="white" /> Play Now
+          {/* Buttons */}
+          <div key={`btns-${current.id}`} className="content-line-4 flex flex-wrap items-center gap-3 pt-1">
+            <button onClick={() => handleNavigate(current)}
+              className="flex items-center gap-2.5 px-7 py-3.5 rounded-lg text-[11px] font-black uppercase tracking-widest text-white transition-all hover:scale-[1.03] active:scale-[0.97]"
+              style={{ background: "#e50914", boxShadow: "0 8px 28px rgba(229,9,20,0.45)" }}>
+              <Play size={15} fill="white" /> Play Now
             </button>
-            <button
-              onClick={() => handleNavigation(currentMovie)}
-              className="flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 text-white px-6 md:px-10 py-2.5 md:py-3 rounded-sm hover:bg-white/20 transition-all font-black uppercase tracking-widest text-xs md:text-sm"
-            >
-              <Info size={18} /> Details
+            <button onClick={() => handleNavigate(current)}
+              className="flex items-center gap-2.5 px-6 py-3.5 rounded-lg text-[11px] font-black uppercase tracking-widest text-white/70 hover:text-white transition-all hover:scale-[1.02]"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)" }}>
+              <Info size={15} /> Details
             </button>
           </div>
         </div>
 
-        {/* TRENDING CAROUSEL - 5 ITEMS ONLY - FULLY VISIBLE */}
-        <div className="pt-10 w-full">
-          <div className="flex items-center justify-between mb-4 px-1">
-            <h2 className="text-[10px] md:text-xs font-black uppercase tracking-[0.4em] text-red-600">
-              Trending
-            </h2>
+        {/* ── Bottom section ─────────────────────────────────────────────── */}
+        <div className="space-y-5">
+
+          {/* Section label + nav arrows */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-0.5 h-4 rounded-full bg-red-600" />
+              <span className="text-[9px] font-black uppercase tracking-[0.35em] text-white/40">Trending Now</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => goTo((activeIndex - 1 + trendingItems.length) % trendingItems.length)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white transition-all hover:bg-white/10"
+                style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+                <ChevronLeft size={14} />
+              </button>
+              <span className="text-[10px] font-black text-white/25 tracking-widest tabular-nums">
+                {String(activeIndex + 1).padStart(2, "0")} / {String(trendingItems.length).padStart(2, "0")}
+              </span>
+              <button
+                onClick={() => goTo((activeIndex + 1) % trendingItems.length)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white/40 hover:text-white transition-all hover:bg-white/10"
+                style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+                <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
 
-          <div className="flex gap-4 md:gap-6 overflow-x-auto no-scrollbar pb-8 pt-4 -mx-6 px-6 md:mx-0 md:px-4 snap-x">
-            {trendingItems.map((movie, index) => (
-              <div
-                key={movie.id}
-                onClick={() => {
-                  // If clicking the already active one, navigate to details
-                  if (activeIndex === index) {
-                    handleNavigation(movie);
-                  } else {
-                    // Otherwise, switch the hero banner
-                    setActiveIndex(index);
-                  }
-                }}
-                className={`flex-none w-28 md:w-44 lg:w-52 snap-start cursor-pointer transition-all duration-500 ${
-                  activeIndex === index
-                    ? "scale-105"
-                    : "opacity-40 hover:opacity-80 scale-95"
-                }`}
-              >
+          {/* Thumbnail row */}
+          <div className="flex gap-3 md:gap-4 overflow-x-auto no-scrollbar pb-2 -mx-6 px-6 md:mx-0 md:px-0 snap-x snap-mandatory">
+            {trendingItems.map((movie, index) => {
+              const isActive = index === activeIndex;
+              return (
                 <div
-                  className={`relative aspect-[2/3] rounded-sm overflow-hidden border-2 transition-all duration-500 ${
-                    activeIndex === index
-                      ? "border-red-600 shadow-[0_0_25px_rgba(220,38,38,0.5)]"
-                      : "border-transparent"
-                  }`}
+                  key={movie.id}
+                  className="thumb-card flex-none snap-start cursor-pointer"
+                  style={{ width: isActive ? 120 : 88 }}
+                  onClick={() => {
+                    if (isActive) handleNavigate(movie);
+                    else goTo(index);
+                  }}
                 >
-                  <img
-                    src={movie.poster}
-                    alt={movie.title}
-                    className="w-full h-full object-cover"
-                  />
-                  {activeIndex === index && (
-                    <div className="absolute inset-0 bg-red-600/10 flex items-center justify-center">
-                      <div className="p-2 bg-red-600 rounded-full shadow-lg">
-                        <Play size={20} fill="white" />
+                  {/* Poster */}
+                  <div className="relative overflow-hidden rounded-lg"
+                    style={{
+                      aspectRatio: "2/3",
+                      border: isActive ? "2px solid #e50914" : "2px solid rgba(255,255,255,0.06)",
+                      boxShadow: isActive ? "0 0 28px rgba(229,9,20,0.35), 0 8px 32px rgba(0,0,0,0.6)" : "0 4px 16px rgba(0,0,0,0.4)",
+                      opacity: isActive ? 1 : 0.45,
+                    }}>
+                    <img
+                      src={movie.poster || `${IMG}/w342${movie.poster_path}`}
+                      alt={movie.title}
+                      className="w-full h-full object-cover transition-transform duration-500"
+                      style={{ transform: isActive ? "scale(1.06)" : "scale(1)" }}
+                    />
+                    {/* Active overlay */}
+                    {isActive && (
+                      <div className="absolute inset-0 flex items-end justify-center pb-3"
+                        style={{ background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%)" }}>
+                        <div className="p-1.5 rounded-full" style={{ background: "#e50914" }}>
+                          <Play size={10} fill="white" />
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                    {/* Progress bar on active */}
+                    {isActive && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 prog-track">
+                        <div className="h-full prog-fill" style={{ width: `${progress}%` }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Title */}
+                  <p className="mt-2 text-[9px] md:text-[10px] font-black uppercase tracking-wider truncate transition-colors"
+                    style={{ color: isActive ? "#e50914" : "rgba(255,255,255,0.35)" }}>
+                    {movie.title}
+                  </p>
+
+                  {/* Type badge */}
+                  <p className="text-[8px] uppercase tracking-widest mt-0.5"
+                    style={{ color: isActive ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)" }}>
+                    {movie.mediaType === "tv" ? "Series" : "Film"}
+                  </p>
                 </div>
-                <h3
-                  className={`mt-3 text-[9px] md:text-[11px] font-black uppercase tracking-widest truncate transition-colors ${
-                    activeIndex === index ? "text-red-500" : "text-white"
-                  }`}
-                >
-                  {movie.title}
-                </h3>
-              </div>
+              );
+            })}
+          </div>
+
+          {/* Dot indicators */}
+          <div className="flex items-center gap-1.5 justify-center">
+            {trendingItems.map((_, i) => (
+              <button key={i} onClick={() => goTo(i)}
+                className="transition-all duration-300 rounded-full"
+                style={{
+                  width:   i === activeIndex ? 20 : 4,
+                  height:  4,
+                  background: i === activeIndex ? "#e50914" : "rgba(255,255,255,0.15)",
+                }} />
             ))}
           </div>
         </div>
       </div>
 
-      <style jsx="true">{`
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
+      {/* ── Pause indicator ────────────────────────────────────────────────── */}
+      {isPaused && (
+        <div className="absolute top-6 right-6 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest text-white/30"
+          style={{ background: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.06)", backdropFilter: "blur(12px)" }}>
+          <span className="w-1.5 h-1.5 rounded-full bg-white/20" /> Paused
+        </div>
+      )}
 
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 0.6;
-          }
-        }
-        .animate-in {
-          animation: fadeIn 1s ease-in-out;
-        }
-
-        @keyframes slideInLeft {
-          from {
-            transform: translateX(-30px);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-        .slide-in-from-left {
-          animation: slideInLeft 0.8s ease-out forwards;
-        }
-      `}</style>
+      {/* ── Right-side index strip (desktop only) ──────────────────────────── */}
+      <div className="hidden xl:flex absolute right-8 top-1/2 -translate-y-1/2 z-20 flex-col gap-2">
+        {trendingItems.map((_, i) => (
+          <button key={i} onClick={() => goTo(i)}
+            className="transition-all duration-300 rounded-full ml-auto"
+            style={{
+              width: 2,
+              height: i === activeIndex ? 40 : 16,
+              background: i === activeIndex ? "#e50914" : "rgba(255,255,255,0.12)",
+            }} />
+        ))}
+      </div>
     </section>
   );
 };
