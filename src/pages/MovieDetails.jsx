@@ -13,7 +13,7 @@ import { auth } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import CryptoJS from "crypto-js";
 import { supabase } from "../../src/services/supabaseClient";
-import languages from "../data/langs.json";
+import languages from "./data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL   = "https://chair-hoping-parallel-around.trycloudflare.com/api/scrape-stream";
