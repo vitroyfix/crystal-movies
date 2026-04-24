@@ -16,8 +16,8 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL   = "https://chair-hoping-parallel-around.trycloudflare.com/api/scrape-stream";
-const SUBS_URL      = "https://chair-hoping-parallel-around.trycloudflare.com/api/subs";
+const BACKEND_URL   = "https://certain-ladies-jennifer-worldcat.trycloudflare.com/api/scrape-stream";
+const SUBS_URL      = "https://certain-ladies-jennifer-worldcat.trycloudflare.com/api/subs";
 const SECRET_KEY    = import.meta.env.VITE_ENCRYPTION_KEY;
 const TMDB_KEY      = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE     = "https://api.themoviedb.org/3";
