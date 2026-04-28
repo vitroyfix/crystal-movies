@@ -16,14 +16,6 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-const BACKEND_URL   = "https://queries-october-diamonds-unavailable.trycloudflare.com/api/scrape-stream";
-const SUBS_URL      = "https://queries-october-diamonds-unavailable.trycloudflare.com/api/subs";
-const SECRET_KEY    = import.meta.env.VITE_ENCRYPTION_KEY;
-const TMDB_KEY      = import.meta.env.VITE_TMDB_API_KEY;
-const TMDB_BASE     = "https://api.themoviedb.org/3";
-const IMG           = "https://image.tmdb.org/t/p";
-=======
 const BACKEND_URL = "https://lifetime-measure-yields-monitored.trycloudflare.com/api/scrape-stream";
 const SUBS_URL    = "https://lifetime-measure-yields-monitored.trycloudflare.com/api/subs";
 const SECRET_KEY  = import.meta.env.VITE_ENCRYPTION_KEY;
@@ -34,7 +26,6 @@ const IMG         = "https://image.tmdb.org/t/p";
 
 // The base server URL, used to prefix proxy paths returned by the server.
 const backendBase = BACKEND_URL.replace("/api/scrape-stream", "");
->>>>>>> 23f3faa (Update MovieDetails logic for stream provider)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const getLanguageName = (code, langList) => {
