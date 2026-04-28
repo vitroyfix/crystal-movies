@@ -16,12 +16,25 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 const BACKEND_URL   = "https://queries-october-diamonds-unavailable.trycloudflare.com/api/scrape-stream";
 const SUBS_URL      = "https://queries-october-diamonds-unavailable.trycloudflare.com/api/subs";
 const SECRET_KEY    = import.meta.env.VITE_ENCRYPTION_KEY;
 const TMDB_KEY      = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE     = "https://api.themoviedb.org/3";
 const IMG           = "https://image.tmdb.org/t/p";
+=======
+const BACKEND_URL = "https://lifetime-measure-yields-monitored.trycloudflare.com/api/scrape-stream";
+const SUBS_URL    = "https://lifetime-measure-yields-monitored.trycloudflare.com/api/subs";
+const SECRET_KEY  = import.meta.env.VITE_ENCRYPTION_KEY;
+const API_KEY     = import.meta.env.VITE_API_KEY;        // ← NEW: matches server API_KEY env var
+const TMDB_KEY    = import.meta.env.VITE_TMDB_API_KEY;
+const TMDB_BASE   = "https://api.themoviedb.org/3";
+const IMG         = "https://image.tmdb.org/t/p";
+
+// The base server URL, used to prefix proxy paths returned by the server.
+const backendBase = BACKEND_URL.replace("/api/scrape-stream", "");
+>>>>>>> 23f3faa (Update MovieDetails logic for stream provider)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const getLanguageName = (code, langList) => {
@@ -39,16 +52,28 @@ const fmtRuntime = (mins) => {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 
-// ─── Sub-components ────────────────────────────────────────────────────────────
+// WHAT: SRT → WebVTT converter, runs entirely in the browser.
+// WHY:  The HTML5 <track> element only parses WebVTT. OpenSubtitles serves
+//       SRT. Two transforms needed:
+//         1. Prepend the mandatory "WEBVTT" header.
+//         2. Replace comma decimal separators in timestamps with dots.
+//            e.g.  00:01:23,456  →  00:01:23.456
+//       Doing this on the frontend means the server never buffers subtitle
+//       bodies — it just streams raw bytes straight through the proxy.
+const srtToVtt = (srtText) =>
+  "WEBVTT\n\n" +
+  srtText
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
 
-/** Glowing red badge */
+// ─── Sub-components ────────────────────────────────────────────────────────────
 const Badge = ({ children, className = "" }) => (
   <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${className}`}>
     {children}
   </span>
 );
 
-/** Horizontal cast scroller */
 const CastCard = ({ member }) => (
   <div className="flex-shrink-0 w-24 group cursor-default">
     <div className="relative w-24 h-24 rounded-full overflow-hidden border-2 border-white/10 group-hover:border-red-500 transition-all duration-300">
@@ -63,12 +88,10 @@ const CastCard = ({ member }) => (
   </div>
 );
 
-/** Related content card */
 const RelatedCard = ({ item, mediaType, onClick }) => {
   const title  = item.title || item.name;
   const year   = (item.release_date || item.first_air_date)?.split("-")[0];
   const rating = item.vote_average?.toFixed(1);
-
   return (
     <div onClick={() => onClick(item)} className="group cursor-pointer relative rounded-lg overflow-hidden aspect-[2/3] bg-zinc-900 border border-white/5 hover:border-red-500/50 transition-all duration-300 hover:scale-[1.03] hover:shadow-xl hover:shadow-red-600/10">
       {item.poster_path
@@ -94,7 +117,6 @@ const RelatedCard = ({ item, mediaType, onClick }) => {
   );
 };
 
-/** Stat tile */
 const StatTile = ({ icon: Icon, label, value }) => (
   <div className="flex flex-col gap-1 p-4 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] transition-colors">
     <p className="text-[9px] uppercase tracking-widest opacity-40 flex items-center gap-1.5"><Icon size={10} />{label}</p>
@@ -102,7 +124,6 @@ const StatTile = ({ icon: Icon, label, value }) => (
   </div>
 );
 
-/** Progress ring for vote average */
 const ScoreRing = ({ score }) => {
   const num = parseFloat(score) || 0;
   const pct = (num / 10) * 100;
@@ -127,55 +148,65 @@ const ScoreRing = ({ score }) => {
 const MovieDetails = () => {
   const params = useParams();
   const navigate = useNavigate();
-  // Handles both route shapes:
-  //   /movie/:id/:mediaType  (id first, then mediaType)
-  //   /details/:mediaType/:id
   const id = params.id;
   const typeFromPath = params.mediaType;
   const resolvedMediaType = typeFromPath === "tv" ? "tv" : "movie";
 
   // Core state
-  const [movie,          setMovie]          = useState(null);
-  const [loading,        setLoading]        = useState(true);
-  const [episodes,       setEpisodes]       = useState([]);
-  const [currentUser,    setCurrentUser]    = useState(null);
-  const [isInList,       setIsInList]       = useState(false);
-  const [isSavingList,   setIsSavingList]   = useState(false);
-  const [selectedSeason, setSelectedSeason] = useState(1);
-  const [selectedEpisode,setSelectedEpisode]= useState(1);
-  const [resumeData,     setResumeData]     = useState(null);
+  const [movie,           setMovie]           = useState(null);
+  const [loading,         setLoading]         = useState(true);
+  const [episodes,        setEpisodes]        = useState([]);
+  const [currentUser,     setCurrentUser]     = useState(null);
+  const [isInList,        setIsInList]        = useState(false);
+  const [isSavingList,    setIsSavingList]    = useState(false);
+  const [selectedSeason,  setSelectedSeason]  = useState(1);
+  const [selectedEpisode, setSelectedEpisode] = useState(1);
+  const [resumeData,      setResumeData]      = useState(null);
 
   // Player state
-  const [activeStream,   setActiveStream]   = useState(null);
-  const [cleanUrl,       setCleanUrl]       = useState(null);
-  const [isCleaning,     setIsCleaning]     = useState(false);
-  const [error,          setError]          = useState(null);
-  const [audioTracks,    setAudioTracks]    = useState([]);
-  const [selectedAudio,  setSelectedAudio]  = useState("original");
-  const [subtitleTracks, setSubtitleTracks] = useState([]);
-  const [selectedSubtitle,setSelectedSubtitle] = useState(-1);
-  const [qualityLevels,  setQualityLevels]  = useState([]);
-  const [selectedQuality,setSelectedQuality]= useState(-1);
-  const [activeMenu,     setActiveMenu]     = useState(null);
-  const [isMuted,        setIsMuted]        = useState(false);
+  const [activeStream,    setActiveStream]    = useState(null);
+  const [cleanUrl,        setCleanUrl]        = useState(null);
+  const [isCleaning,      setIsCleaning]      = useState(false);
+  const [error,           setError]           = useState(null);
+  const [audioTracks,     setAudioTracks]     = useState([]);
+  const [selectedAudio,   setSelectedAudio]   = useState("original");
+  const [subtitleTracks,  setSubtitleTracks]  = useState([]);   // shape: [{ title, language, src: blobUrl }]
+  const [selectedSubtitle,setSelectedSubtitle]= useState(-1);
+  const [qualityLevels,   setQualityLevels]   = useState([]);
+  const [selectedQuality, setSelectedQuality] = useState(-1);
+  const [activeMenu,      setActiveMenu]      = useState(null);
+  const [isMuted,         setIsMuted]         = useState(false);
 
   // Rich content state
-  const [cast,           setCast]           = useState([]);
-  const [related,        setRelated]        = useState([]);
-  const [relatedPage,    setRelatedPage]    = useState(1);
-  const [relatedTotal,   setRelatedTotal]   = useState(0);
-  const [relatedLoading, setRelatedLoading] = useState(false);
-  const [castPage,       setCastPage]       = useState(0);
-  const [activeTab,      setActiveTab]      = useState("episodes"); // episodes | cast | related
-  const [episodeProgress,setEpisodeProgress]= useState({});
-  const [heroParallax,   setHeroParallax]   = useState(0);
+  const [cast,            setCast]            = useState([]);
+  const [related,         setRelated]         = useState([]);
+  const [relatedPage,     setRelatedPage]     = useState(1);
+  const [relatedTotal,    setRelatedTotal]    = useState(0);
+  const [relatedLoading,  setRelatedLoading]  = useState(false);
+  const [castPage,        setCastPage]        = useState(0);
+  const [activeTab,       setActiveTab]       = useState("episodes");
+  const [episodeProgress, setEpisodeProgress] = useState({});
+  const [heroParallax,    setHeroParallax]    = useState(0);
 
-  const videoRef       = useRef(null);
-  const hlsRef         = useRef(null);
+  const videoRef         = useRef(null);
+  const hlsRef           = useRef(null);
   const progressInterval = useRef(null);
-  const controlsRef    = useRef(null);
-  const castScrollRef  = useRef(null);
-  const playerRef      = useRef(null);
+  const controlsRef      = useRef(null);
+  const castScrollRef    = useRef(null);
+  const playerRef        = useRef(null);
+
+  // WHAT: blobUrlsRef stores all active blob: URLs for subtitle tracks.
+  // WHY:  Blob URLs hold a reference to an in-memory ArrayBuffer. If we
+  //       don't call URL.revokeObjectURL() when the stream changes or the
+  //       component unmounts, those buffers leak — each subtitle set is
+  //       roughly 100–500KB sitting permanently in the tab's heap.
+  const blobUrlsRef = useRef([]);
+
+  // Helper: revoke all current blob URLs and clear the ref
+  const revokeBlobUrls = () => {
+    blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    blobUrlsRef.current = [];
+  };
 
   // ── Parallax ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -212,8 +243,8 @@ const MovieDetails = () => {
     const fn = (e) => {
       const v = videoRef.current;
       if (!v) return;
-      if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
-      switch(e.key) {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      switch (e.key) {
         case " ": case "k": e.preventDefault(); v.paused ? v.play() : v.pause(); break;
         case "ArrowRight": v.currentTime = Math.min(v.duration, v.currentTime + 10); break;
         case "ArrowLeft":  v.currentTime = Math.max(0, v.currentTime - 10); break;
@@ -327,13 +358,23 @@ const MovieDetails = () => {
   // ── Scraping ──────────────────────────────────────────────────────────────
   const triggerBackendScrape = async (mId, mType, s, e) => {
     setIsCleaning(true); setCleanUrl(null); setError(null); setActiveMenu(null);
+    setSubtitleTracks([]);
+    setSelectedSubtitle(-1);
+    revokeBlobUrls(); // Clean up previous subtitle blob URLs before starting fresh
     try {
       const encrypted = encryptData({ id: mId, type: mType, s, e });
-      const res = await fetch(BACKEND_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: encrypted }) });
+      // WHAT: X-API-Key header added to every protected route call.
+      // WHY:  The server middleware rejects any request missing this header
+      //       with a 401, so even if someone finds the URL they can't use it.
+      const res = await fetch(BACKEND_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
+        body: JSON.stringify({ data: encrypted }),
+      });
       if (!res.ok) throw new Error();
       const data = await res.json();
       if (data.success && data.url) {
-        setCleanUrl(`${BACKEND_URL.replace('/api/scrape-stream', '')}${data.url}`);
+        setCleanUrl(`${backendBase}${data.url}`);
         fetchSubtitles(mId, mType, s, e);
       } else {
         setError("Stream could not be found.");
@@ -343,18 +384,53 @@ const MovieDetails = () => {
     } finally { setIsCleaning(false); }
   };
 
+  // WHAT: fetchSubtitles now does the full SRT→VTT conversion in the browser.
+  // WHY:  The server returns raw proxy paths (not pre-fetched content).
+  //       We fetch each subtitle file here with the API key header,
+  //       run srtToVtt() on the response text, wrap it in a Blob,
+  //       and store the resulting blob: URL in state.
+  //       The <track src> then points to a local blob — zero additional
+  //       server calls are made when the browser loads the track.
   const fetchSubtitles = async (mId, mType, s, e) => {
     try {
       const encrypted = encryptData({ imdbId: mId, type: mType, season: s, episode: e });
-      const res = await fetch(SUBS_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: encrypted }) });
+      const res = await fetch(SUBS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
+        body: JSON.stringify({ data: encrypted }),
+      });
       const result = await res.json();
-      if (result.data) {
-        const bytes = CryptoJS.AES.decrypt(result.data, SECRET_KEY);
-        const dec = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
-        setSubtitleTracks(dec.tracks || []);
-        const enIdx = (dec.tracks || []).findIndex(t => t.language === "en");
-        if (enIdx !== -1) setSelectedSubtitle(enIdx);
-      }
+      if (!result.data) return;
+
+      const bytes = CryptoJS.AES.decrypt(result.data, SECRET_KEY);
+      const dec   = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+      const rawTracks = dec.tracks || [];
+
+      // Fetch each raw subtitle through the proxy (API key required),
+      // convert, and create a blob URL. allSettled so one failed track
+      // doesn't block the others.
+      const converted = await Promise.allSettled(
+        rawTracks.map(async (track) => {
+          // track.uri is "/api/proxy?url=...&type=sub" — prepend base, no re-wrapping.
+          const proxyUrl = `${backendBase}${track.uri}`;
+          const subRes   = await fetch(proxyUrl, { headers: { "X-API-Key": API_KEY } });
+          if (!subRes.ok) throw new Error(`HTTP ${subRes.status}`);
+          const rawText = await subRes.text();
+          const vttText = srtToVtt(rawText);
+          const blob    = new Blob([vttText], { type: "text/vtt" });
+          const blobUrl = URL.createObjectURL(blob);
+          blobUrlsRef.current.push(blobUrl); // Track for later cleanup
+          return { title: track.title, language: track.language, src: blobUrl };
+        })
+      );
+
+      const tracks = converted
+        .filter(r => r.status === "fulfilled")
+        .map(r => r.value);
+
+      setSubtitleTracks(tracks);
+      const enIdx = tracks.findIndex(t => t.language === "en");
+      setSelectedSubtitle(enIdx !== -1 ? enIdx : -1);
     } catch {}
   };
 
@@ -407,17 +483,44 @@ const MovieDetails = () => {
       video.pause(); video.src = ""; video.removeAttribute("src"); video.load();
       if (hlsRef.current) { hlsRef.current.detachMedia(); hlsRef.current.destroy(); hlsRef.current = null; }
       if (progressInterval.current) { clearInterval(progressInterval.current); progressInterval.current = null; }
+      // WHAT: Revoke blob URLs on stream cleanup.
+      // WHY:  Each call to URL.createObjectURL() pins ~100–500KB of subtitle
+      //       text in memory. Without revocation, every episode switch leaks
+      //       that memory for the lifetime of the tab.
+      revokeBlobUrls();
     };
   }, [cleanUrl, selectedEpisode, selectedSeason]);
 
-  // ── Subtitle track sync ───────────────────────────────────────────────────
+  // ── Subtitle track sync via textTracks API ────────────────────────────────
+  // WHAT: Uses video.textTracks (live NodeList) to set track modes.
+  // WHY:  Since <track src> now points to a blob: URL the browser loads
+  //       near-instantly. We still use a small timeout to let React finish
+  //       adding the <track> elements to the DOM before reading textTracks.
   useEffect(() => {
-    if (!videoRef.current) return;
     const video = videoRef.current;
-    video.querySelectorAll("track").forEach((el, idx) => {
-      if (el.track) el.track.mode = selectedSubtitle === idx ? "showing" : "disabled";
-    });
-  }, [selectedSubtitle, subtitleTracks.length]);
+    if (!video) return;
+    const apply = () => {
+      const tracks = video.textTracks;
+      if (!tracks || tracks.length === 0) return;
+      for (let i = 0; i < tracks.length; i++)
+        tracks[i].mode = i === selectedSubtitle ? "showing" : "hidden";
+    };
+    const timer = setTimeout(apply, 150);
+    return () => clearTimeout(timer);
+  }, [selectedSubtitle, subtitleTracks]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handleTrackAdded = () => {
+      const tracks = video.textTracks;
+      if (!tracks) return;
+      for (let i = 0; i < tracks.length; i++)
+        tracks[i].mode = i === selectedSubtitle ? "showing" : "hidden";
+    };
+    video.textTracks?.addEventListener("addtrack", handleTrackAdded);
+    return () => video.textTracks?.removeEventListener("addtrack", handleTrackAdded);
+  }, [selectedSubtitle, cleanUrl]);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -442,22 +545,19 @@ const MovieDetails = () => {
       fetchSeasonDetails(id, selectedSeason).then(setEpisodes);
   }, [selectedSeason, id, resolvedMediaType]);
 
-  // ── TMDB extras (cast + related) ──────────────────────────────────────────
   const fetchCast = async () => {
     try {
-      const res = await fetch(`${TMDB_BASE}/${resolvedMediaType}/${id}/credits?api_key=${TMDB_KEY}`);
+      const res  = await fetch(`${TMDB_BASE}/${resolvedMediaType}/${id}/credits?api_key=${TMDB_KEY}`);
       const data = await res.json();
       setCast((data.cast || []).slice(0, 20));
     } catch {}
   };
 
-  const RELATED_PER_PAGE = 12;
-
   const fetchRelated = async (page = 1) => {
     setRelatedLoading(true);
     try {
-      const res = await fetch(`${TMDB_BASE}/${resolvedMediaType}/${id}/recommendations?api_key=${TMDB_KEY}&page=${page}`);
-      const data = await res.json();
+      const res     = await fetch(`${TMDB_BASE}/${resolvedMediaType}/${id}/recommendations?api_key=${TMDB_KEY}&page=${page}`);
+      const data    = await res.json();
       const results = (data.results || []).filter(r => r.poster_path);
       setRelated(results);
       setRelatedTotal(data.total_pages || 1);
@@ -543,78 +643,46 @@ const MovieDetails = () => {
   if (!movie) return null;
 
   const { title, name, badgeYear, rating, runtime, plot, backdrop_path, poster_path, director, writer, release_date, first_air_date, votes } = movie;
-  const genre       = movie.genres?.map(g => g.name).join(" · ") || "";
-  const language    = movie.original_language?.toUpperCase() || "EN";
+  const genre        = movie.genres?.map(g => g.name).join(" · ") || "";
+  const language     = movie.original_language?.toUpperCase() || "EN";
   const displayTitle = title || name;
   const heroImage    = backdrop_path ? `${IMG}/original${backdrop_path}` : `${IMG}/original${poster_path}`;
   const posterImage  = poster_path   ? `${IMG}/w500${poster_path}`       : heroImage;
 
   const tabs = [
     ...(resolvedMediaType === "tv" ? [{ key: "episodes", label: "Episodes", icon: Tv }] : []),
-    ...(cast.length    ? [{ key: "cast",     label: "Cast",     icon: User }] : []),
-    ...(related.length ? [{ key: "related",  label: "Related",  icon: Film }] : []),
+    ...(cast.length    ? [{ key: "cast",    label: "Cast",    icon: User }] : []),
+    ...(related.length ? [{ key: "related", label: "Related", icon: Film }] : []),
   ];
-
-  const backendBase = BACKEND_URL.replace("/api/scrape-stream", "");
 
   return (
     <div className="relative min-h-screen bg-[#070707] text-white selection:bg-red-600 selection:text-white overflow-x-hidden" style={{ fontFamily: "'DM Sans', sans-serif" }}>
 
-      {/* ── Google font import ─────────────────────────────────────── */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,700;0,9..40,900;1,9..40,300&family=Playfair+Display:wght@400;700;900&display=swap');
-
-        :root {
-          --red: #e50914;
-          --red-dim: rgba(229,9,20,0.15);
-          --glass: rgba(255,255,255,0.035);
-          --glass-border: rgba(255,255,255,0.07);
-        }
-
+        :root { --red: #e50914; --red-dim: rgba(229,9,20,0.15); --glass: rgba(255,255,255,0.035); --glass-border: rgba(255,255,255,0.07); }
         .font-display { font-family: 'Playfair Display', serif; }
-
-        /* scrollbar */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-        /* custom scrollbar for dropdowns */
         .thin-scroll::-webkit-scrollbar { width: 3px; }
         .thin-scroll::-webkit-scrollbar-track { background: transparent; }
         .thin-scroll::-webkit-scrollbar-thumb { background: var(--red); border-radius: 9px; }
-
-        /* Fade-in keyframes */
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(24px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
         .fade-up { animation: fadeUp 0.7s ease forwards; }
-        .fade-up-d1 { animation-delay: 0.1s; opacity: 0; animation: fadeUp 0.7s ease 0.1s forwards; }
-        .fade-up-d2 { animation-delay: 0.2s; opacity: 0; animation: fadeUp 0.7s ease 0.2s forwards; }
-        .fade-up-d3 { animation-delay: 0.3s; opacity: 0; animation: fadeUp 0.7s ease 0.3s forwards; }
-        .fade-up-d4 { animation-delay: 0.4s; opacity: 0; animation: fadeUp 0.7s ease 0.4s forwards; }
-        .fade-up-d5 { animation-delay: 0.5s; opacity: 0; animation: fadeUp 0.7s ease 0.5s forwards; }
-        .fade-up-d6 { animation-delay: 0.6s; opacity: 0; animation: fadeUp 0.7s ease 0.6s forwards; }
-
-        /* Scan line overlay for cinematic feel */
-        .scanlines::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
-          pointer-events: none;
-          z-index: 1;
-        }
-
-        /* Video cue styling */
+        .fade-up-d1 { opacity: 0; animation: fadeUp 0.7s ease 0.1s forwards; }
+        .fade-up-d2 { opacity: 0; animation: fadeUp 0.7s ease 0.2s forwards; }
+        .fade-up-d3 { opacity: 0; animation: fadeUp 0.7s ease 0.3s forwards; }
+        .fade-up-d4 { opacity: 0; animation: fadeUp 0.7s ease 0.4s forwards; }
+        .fade-up-d5 { opacity: 0; animation: fadeUp 0.7s ease 0.5s forwards; }
+        .fade-up-d6 { opacity: 0; animation: fadeUp 0.7s ease 0.6s forwards; }
+        .scanlines::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px); pointer-events: none; z-index: 1; }
         video::cue { background-color: rgba(0,0,0,0.82); color: #fff; font-size: 1rem; font-family: 'DM Sans', sans-serif; padding: 3px 10px; border-radius: 3px; }
         video::-webkit-media-text-track-container { overflow: visible !important; z-index: 9999 !important; }
-        video::-webkit-media-text-track-display   { overflow: visible !important; }
-
-        /* Episode progress bar */
+        video::-webkit-media-text-track-display { overflow: visible !important; }
         .ep-progress { position: absolute; bottom: 0; left: 0; height: 2px; background: var(--red); border-radius: 0 0 0 8px; }
       `}</style>
 
-      {/* ── Back button ────────────────────────────────────────────── */}
+      {/* Back button */}
       <button onClick={() => navigate(-1)}
         className="fixed top-6 left-4 md:top-8 md:left-8 z-[60] flex items-center gap-2 px-3 py-2 md:px-4 md:py-2.5 rounded-full transition-all group"
         style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -622,27 +690,18 @@ const MovieDetails = () => {
         <span className="text-[9px] font-black uppercase tracking-widest text-white/60 group-hover:text-white hidden sm:inline">Back</span>
       </button>
 
-      {/* ── Hero ───────────────────────────────────────────────────── */}
+      {/* Hero */}
       <div className="relative h-screen min-h-[600px] max-h-[900px] overflow-hidden">
-        {/* Parallax backdrop */}
         <div className="absolute inset-0 w-full h-full scanlines">
-          <img
-            src={heroImage}
-            alt={displayTitle}
-            className="w-full h-full object-cover object-center"
-            style={{ transform: `translateY(${heroParallax}px) scale(1.15)`, transition: "transform 0.05s linear" }}
-          />
-          {/* Gradients */}
+          <img src={heroImage} alt={displayTitle} className="w-full h-full object-cover object-center"
+            style={{ transform: `translateY(${heroParallax}px) scale(1.15)`, transition: "transform 0.05s linear" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(to right, rgba(7,7,7,0.97) 30%, rgba(7,7,7,0.4) 70%, transparent)" }} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(to top, #070707 0%, transparent 50%)" }} />
           <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at 20% 50%, rgba(229,9,20,0.06) 0%, transparent 60%)" }} />
         </div>
 
-        {/* Hero content */}
         <div className="relative z-10 h-full flex items-center px-6 md:px-16 lg:px-24">
           <div className="flex gap-10 items-end w-full max-w-6xl">
-
-            {/* Poster (hidden on mobile) */}
             <div className="hidden md:block flex-shrink-0 fade-up" style={{ width: 180 }}>
               <div className="relative rounded-xl overflow-hidden shadow-2xl" style={{ border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 40px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05)" }}>
                 <img src={posterImage} alt={displayTitle} className="w-full aspect-[2/3] object-cover" />
@@ -650,29 +709,22 @@ const MovieDetails = () => {
               </div>
             </div>
 
-            {/* Text */}
             <div className="flex-1 space-y-5 pb-8">
-              {/* Genre + badges */}
               <div className="flex flex-wrap gap-2 fade-up">
-                <Badge className="bg-red-600/20 border border-red-600/60 text-red-400">
-                  <ShieldCheck size={10} /> Protected
-                </Badge>
-                {resolvedMediaType === "tv" ? (
-                  <Badge className="bg-white/5 border border-white/10 text-white/50"><Tv size={10} /> Series</Badge>
-                ) : (
-                  <Badge className="bg-white/5 border border-white/10 text-white/50"><Film size={10} /> Film</Badge>
-                )}
+                <Badge className="bg-red-600/20 border border-red-600/60 text-red-400"><ShieldCheck size={10} /> Protected</Badge>
+                {resolvedMediaType === "tv"
+                  ? <Badge className="bg-white/5 border border-white/10 text-white/50"><Tv size={10} /> Series</Badge>
+                  : <Badge className="bg-white/5 border border-white/10 text-white/50"><Film size={10} /> Film</Badge>
+                }
                 {genre.split(" · ").slice(0, 2).map(g => (
                   <Badge key={g} className="bg-white/5 border border-white/10 text-white/40">{g}</Badge>
                 ))}
               </div>
 
-              {/* Title */}
               <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.05] tracking-tight text-white fade-up-d1">
                 {displayTitle}
               </h1>
 
-              {/* Meta row */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] tracking-wider text-white/50 fade-up-d2">
                 <span className="font-bold text-white/70">{badgeYear || (release_date || first_air_date)?.split("-")[0]}</span>
                 <span className="w-px h-3 bg-white/20" />
@@ -682,28 +734,24 @@ const MovieDetails = () => {
                 <span className="uppercase">{language}</span>
               </div>
 
-              {/* Score + votes */}
               {parseFloat(rating) > 0 && (() => { const r = parseFloat(rating); return (
-              <div className="flex items-center gap-4 fade-up-d2">
-                <ScoreRing score={r} />
-                <div>
-                  <p className="text-xs font-bold text-white/80">{r.toFixed(1)} / 10</p>
-                  <p className="text-[10px] text-white/30">{votes?.toLocaleString()} ratings</p>
+                <div className="flex items-center gap-4 fade-up-d2">
+                  <ScoreRing score={r} />
+                  <div>
+                    <p className="text-xs font-bold text-white/80">{r.toFixed(1)} / 10</p>
+                    <p className="text-[10px] text-white/30">{votes?.toLocaleString()} ratings</p>
+                  </div>
+                  <div className="flex gap-0.5 ml-2">
+                    {Array.from({ length: 5 }, (_, i) => (
+                      <Star key={i} size={13} className={i < Math.floor(r / 2) ? "fill-red-500 text-red-500" : "text-white/15"} />
+                    ))}
+                  </div>
                 </div>
-                <div className="flex gap-0.5 ml-2">
-                  {Array.from({ length: 5 }, (_, i) => (
-                    <Star key={i} size={13} className={i < Math.floor(r / 2) ? "fill-red-500 text-red-500" : "text-white/15"} />
-                  ))}
-                </div>
-              </div>
               ); })()}
 
-              {/* Plot */}
               <p className="text-sm leading-relaxed text-white/60 max-w-lg line-clamp-3 fade-up-d3">{plot}</p>
 
-              {/* Action row */}
               <div className="flex flex-wrap items-center gap-3 fade-up-d4">
-                {/* Play */}
                 <button onClick={handleResumeClick}
                   className="flex items-center gap-2.5 px-7 py-3.5 rounded-lg text-xs font-black uppercase tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98]"
                   style={{ background: "var(--red)", boxShadow: "0 8px 32px rgba(229,9,20,0.4)" }}>
@@ -713,7 +761,6 @@ const MovieDetails = () => {
                     : "Start Streaming"}
                 </button>
 
-                {/* Watchlist */}
                 <button onClick={handleWatchlistToggle} disabled={isSavingList}
                   className={`flex items-center gap-2 px-5 py-3.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-[0.98] ${isInList ? "bg-white text-black" : "text-white"}`}
                   style={!isInList ? { background: "var(--glass)", border: "1px solid var(--glass-border)", backdropFilter: "blur(16px)" } : {}}>
@@ -721,7 +768,6 @@ const MovieDetails = () => {
                   {isInList ? "In My List" : "My List"}
                 </button>
 
-                {/* Trailer */}
                 <button onClick={() => { setActiveStream(null); playTrailer(); }}
                   className="flex items-center gap-2 px-5 py-3.5 rounded-lg text-xs font-black uppercase tracking-widest text-white/60 hover:text-white transition-all"
                   style={{ background: "var(--glass)", border: "1px solid var(--glass-border)", backdropFilter: "blur(16px)" }}>
@@ -732,14 +778,11 @@ const MovieDetails = () => {
           </div>
         </div>
 
-        {/* Bottom edge fade */}
         <div className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none" style={{ background: "linear-gradient(to bottom, transparent, #070707)" }} />
       </div>
 
-      {/* ── Details section ───────────────────────────────────────── */}
+      {/* Details section */}
       <div className="px-6 md:px-16 lg:px-24 py-12 space-y-10">
-
-        {/* Stats grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 fade-up-d5">
           <StatTile icon={Calendar} label="Release"  value={badgeYear || first_air_date || release_date} />
           <StatTile icon={Globe}    label="Language" value={language} />
@@ -747,10 +790,8 @@ const MovieDetails = () => {
           <StatTile icon={FileText} label="Writer"   value={writer} />
         </div>
 
-        {/* ── Tabs ──────────────────────────────────────────────── */}
         {tabs.length > 0 && (
           <div className="space-y-6">
-            {/* Tab bar */}
             <div className="flex items-center gap-1 border-b" style={{ borderColor: "var(--glass-border)" }}>
               {tabs.map(({ key, label, icon: Icon }) => (
                 <button key={key} onClick={() => setActiveTab(key)}
@@ -760,10 +801,9 @@ const MovieDetails = () => {
               ))}
             </div>
 
-            {/* ── Episodes tab ───────────────────────────────── */}
+            {/* Episodes tab */}
             {activeTab === "episodes" && resolvedMediaType === "tv" && (
               <div className="space-y-6">
-                {/* Season select */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <p className="text-xs text-white/30 uppercase tracking-widest">{episodes.length} Episodes</p>
                   <select value={selectedSeason} onChange={e => { setSelectedSeason(Number(e.target.value)); setSelectedEpisode(1); }}
@@ -775,37 +815,28 @@ const MovieDetails = () => {
                   </select>
                 </div>
 
-                {/* Episode grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {episodes.map(ep => {
                     const progressKey = `s${selectedSeason}e${ep.episode_number}`;
                     const progress    = episodeProgress[progressKey];
                     const pct         = progress && ep.runtime ? Math.min(100, (progress / (ep.runtime * 60)) * 100) : 0;
                     const isActive    = selectedEpisode === ep.episode_number && activeStream;
-
                     return (
                       <div key={`${selectedSeason}-${ep.episode_number}`} onClick={() => handleEpisodeSelect(ep.episode_number)}
                         className={`group cursor-pointer rounded-xl overflow-hidden transition-all duration-300 ${isActive ? "ring-2 ring-red-600 shadow-lg shadow-red-600/20 scale-[1.02]" : "hover:scale-[1.02]"}`}
                         style={{ background: "var(--glass)", border: `1px solid ${isActive ? "transparent" : "var(--glass-border)"}` }}>
-
-                        {/* Thumbnail */}
                         <div className="relative aspect-video overflow-hidden">
-                          <img
-                            src={ep.still_path ? `${IMG}/w500${ep.still_path}` : heroImage}
-                            alt={ep.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                          />
+                          <img src={ep.still_path ? `${IMG}/w500${ep.still_path}` : heroImage} alt={ep.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                             <div className="p-3 rounded-full" style={{ background: "var(--red)", boxShadow: "0 0 20px rgba(229,9,20,0.5)" }}>
                               <Play size={18} fill="white" />
                             </div>
                           </div>
-                          {/* Episode number badge */}
                           <div className="absolute top-2 left-2 px-2 py-0.5 rounded text-[9px] font-black text-white/80"
                             style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}>
                             E{ep.episode_number}
                           </div>
-                          {/* Progress bar */}
                           {pct > 0 && <div className="ep-progress" style={{ width: `${pct}%` }} />}
                           {isActive && (
                             <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black text-white"
@@ -814,7 +845,6 @@ const MovieDetails = () => {
                             </div>
                           )}
                         </div>
-
                         <div className="p-3 space-y-1">
                           <h3 className="text-[11px] font-bold uppercase tracking-wide truncate text-white/90 group-hover:text-white transition-colors">{ep.name}</h3>
                           {ep.runtime && <p className="text-[9px] text-white/30 flex items-center gap-1"><Clock size={8} />{ep.runtime}m</p>}
@@ -827,7 +857,7 @@ const MovieDetails = () => {
               </div>
             )}
 
-            {/* ── Cast tab ───────────────────────────────────── */}
+            {/* Cast tab */}
             {activeTab === "cast" && cast.length > 0 && (
               <div className="relative">
                 <button onClick={() => scrollCast(-1)} className="absolute left-0 top-8 -translate-x-3 z-10 p-2 rounded-full bg-black border border-white/10 hover:border-white/30 hover:bg-white/10 transition-all">
@@ -842,7 +872,7 @@ const MovieDetails = () => {
               </div>
             )}
 
-            {/* ── Related tab ────────────────────────────────── */}
+            {/* Related tab */}
             {activeTab === "related" && (
               <div className="space-y-6">
                 {relatedLoading ? (
@@ -856,12 +886,9 @@ const MovieDetails = () => {
                         <RelatedCard key={item.id} item={item} mediaType={resolvedMediaType} onClick={handleRelatedClick} />
                       ))}
                     </div>
-                    {/* Pagination */}
                     {relatedTotal > 1 && (
                       <div className="flex items-center justify-center gap-2 pt-4">
-                        <button
-                          onClick={() => fetchRelated(relatedPage - 1)}
-                          disabled={relatedPage === 1}
+                        <button onClick={() => fetchRelated(relatedPage - 1)} disabled={relatedPage === 1}
                           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white disabled:opacity-20 transition-all hover:bg-white/10 disabled:cursor-not-allowed"
                           style={{ background: "var(--glass)", border: "1px solid var(--glass-border)" }}>
                           <ChevronLeft size={12} /> Prev
@@ -881,9 +908,7 @@ const MovieDetails = () => {
                             );
                           })}
                         </div>
-                        <button
-                          onClick={() => fetchRelated(relatedPage + 1)}
-                          disabled={relatedPage >= relatedTotal}
+                        <button onClick={() => fetchRelated(relatedPage + 1)} disabled={relatedPage >= relatedTotal}
                           className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white disabled:opacity-20 transition-all hover:bg-white/10 disabled:cursor-not-allowed"
                           style={{ background: "var(--glass)", border: "1px solid var(--glass-border)" }}>
                           Next <ChevronRight size={12} />
@@ -898,11 +923,9 @@ const MovieDetails = () => {
         )}
       </div>
 
-      {/* ── Full-screen Player ────────────────────────────────────── */}
+      {/* Full-screen Player */}
       {(activeStream || isPlaying) && (
         <div ref={playerRef} className="fixed inset-0 z-[100] bg-black flex flex-col">
-
-          {/* Header bar */}
           <div className="absolute top-0 w-full px-4 md:px-8 py-4 flex items-center justify-between z-[110] pointer-events-none"
             style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)" }}>
             <div className="flex items-center gap-3 pointer-events-auto">
@@ -914,17 +937,16 @@ const MovieDetails = () => {
                 )}
               </h2>
             </div>
-
             <button onClick={() => {
               if (videoRef.current) saveProgress(videoRef.current.currentTime);
               setActiveStream(null); stopTrailer(); setCleanUrl(null); setActiveMenu(null);
+              revokeBlobUrls(); // Clean up on manual close too
             }} className="pointer-events-auto p-2 md:p-2.5 rounded-full transition-all hover:scale-110"
               style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.1)" }}>
               <X size={18} className="text-white/70 hover:text-white" />
             </button>
           </div>
 
-          {/* Player area */}
           <div className="flex-grow w-full relative">
             {isCleaning ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black gap-4">
@@ -951,37 +973,48 @@ const MovieDetails = () => {
               </div>
             ) : cleanUrl ? (
               <div className="relative w-full h-full">
-                <video ref={videoRef} controls autoPlay playsInline crossOrigin="anonymous" className="w-full h-full object-contain bg-black">
-                  {subtitleTracks.map((track, idx) => {
-                    const rawUri = track.uri.includes("url=") ? decodeURIComponent(track.uri.split("url=")[1]) : track.uri;
-                    const subUrl = `${backendBase}/api/proxy?url=${encodeURIComponent(rawUri)}&type=sub`;
-                    return (
-                      <track key={idx} kind="subtitles" src={subUrl}
-                        label={getLanguageName(track.language, languages)}
-                        srcLang={track.language} default={idx === selectedSubtitle} />
-                    );
-                  })}
+                <video
+                  ref={videoRef}
+                  controls
+                  autoPlay
+                  playsInline
+                  crossOrigin="anonymous"
+                  className="w-full h-full object-contain bg-black"
+                >
+                  {/*
+                    WHAT: <track src> now uses track.src which is a blob: URL.
+                    WHY:  The blob URL points to in-memory VTT content that
+                          was already fetched and converted by fetchSubtitles().
+                          The browser loads it instantly with zero network calls,
+                          and crossOrigin restrictions don't apply to blob: URLs.
+                  */}
+                  {subtitleTracks.map((track, idx) => (
+                    <track
+                      key={`${cleanUrl}-${idx}`}
+                      kind="subtitles"
+                      src={track.src}
+                      label={getLanguageName(track.language, languages)}
+                      srcLang={track.language}
+                    />
+                  ))}
                 </video>
 
                 {/* Controls overlay */}
                 <div ref={controlsRef}
                   className="absolute bottom-20 md:bottom-24 right-4 md:right-8 flex flex-wrap justify-end gap-2 z-[9999] pointer-events-auto">
 
-                  {/* Mute */}
-                  <button onClick={() => { if(videoRef.current){ videoRef.current.muted = !videoRef.current.muted; setIsMuted(v => !v); }}}
+                  <button onClick={() => { if (videoRef.current) { videoRef.current.muted = !videoRef.current.muted; setIsMuted(v => !v); } }}
                     className="p-2 rounded-lg text-white transition-all hover:bg-white/10"
                     style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.12)" }}>
                     {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
                   </button>
 
-                  {/* Fullscreen */}
                   <button onClick={() => document.fullscreenElement ? document.exitFullscreen() : playerRef.current?.requestFullscreen()}
                     className="p-2 rounded-lg text-white transition-all hover:bg-white/10"
                     style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.12)" }}>
                     <Maximize size={14} />
                   </button>
 
-                  {/* Audio tracks */}
                   {audioTracks.length > 1 && (
                     <button onClick={toggleAudio}
                       className="px-3 py-2 rounded-lg text-[10px] uppercase font-black text-white transition-all hover:bg-red-600"
@@ -990,7 +1023,6 @@ const MovieDetails = () => {
                     </button>
                   )}
 
-                  {/* Quality */}
                   {activeStream && (
                     <div className="relative">
                       <button onClick={() => setActiveMenu(p => p === "quality" ? null : "quality")}
@@ -1013,7 +1045,6 @@ const MovieDetails = () => {
                     </div>
                   )}
 
-                  {/* Subtitles */}
                   {subtitleTracks.length > 0 && (
                     <div className="relative">
                       <button onClick={() => setActiveMenu(p => p === "subs" ? null : "subs")}
@@ -1041,8 +1072,7 @@ const MovieDetails = () => {
                   )}
                 </div>
 
-                {/* Keyboard hint */}
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 text-[9px] text-white/20 uppercase tracking-widest pointer-events-none select-none hidden md:flex">
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 hidden md:flex items-center gap-4 text-[9px] text-white/20 uppercase tracking-widest pointer-events-none select-none">
                   <span>Space · Play/Pause</span>
                   <span className="w-px h-3 bg-white/10" />
                   <span>← → · Seek 10s</span>
