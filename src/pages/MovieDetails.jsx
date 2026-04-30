@@ -16,8 +16,8 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://switching-llp-miles-brush.trycloudflare.com/api/scrape-stream";
-const SUBS_URL    = "https://switching-llp-miles-brush.trycloudflare.com/api/subs";
+const BACKEND_URL = "https://birds-consciousness-spam-dolls.trycloudflare.com/api/scrape-stream";
+const SUBS_URL    = "https://birds-consciousness-spam-dolls.trycloudflare.com/api/subs";
 const SECRET_KEY  = import.meta.env.VITE_ENCRYPTION_KEY;
 const API_KEY     = import.meta.env.VITE_API_KEY;        // ← NEW: matches server API_KEY env var
 const TMDB_KEY    = import.meta.env.VITE_TMDB_API_KEY;
