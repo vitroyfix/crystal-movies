@@ -49,10 +49,12 @@ function mapMovies(data) {
   });
 }
 
-export async function fetchByGenre(genreId, page = 1) {
+// UPDATED: Now accepts mediaType as the 3rd argument
+export async function fetchByGenre(genreId, page = 1, mediaType = "movie") {
   try {
+    const endpointType = mediaType === "all" ? "movie" : mediaType;
     const res = await fetch(
-      `${BASE_URL}/discover/movie?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&language=en-US&page=${page}`
+      `${BASE_URL}/discover/${endpointType}?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&language=en-US&page=${page}`
     );
     if (!res.ok) throw new Error(`Error fetching by genre: ${res.status}`);
     const data = await res.json();
@@ -75,9 +77,10 @@ export async function fetchMovies(page = 1) {
   }
 }
 
-export async function fetchTrending() {
+// UPDATED: Accepts mediaType (all, movie, or tv)
+export async function fetchTrending(mediaType = "all") {
   try {
-    const res = await fetch(`${BASE_URL}/trending/all/day?api_key=${API_KEY}&language=en-US`);
+    const res = await fetch(`${BASE_URL}/trending/${mediaType}/day?api_key=${API_KEY}&language=en-US`);
     if (!res.ok) throw new Error(`Error fetching trending: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -210,9 +213,11 @@ export async function fetchTVShows(page = 1) {
   }
 }
 
-export async function fetchTopRatedMovies(page = 1) {
+// UPDATED: Accepts mediaType as the first argument, defaults to movie
+export async function fetchTopRatedMovies(mediaType = "movie", page = 1) {
   try {
-    const res = await fetch(`${BASE_URL}/movie/top_rated?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const endpointType = mediaType === "all" ? "movie" : mediaType;
+    const res = await fetch(`${BASE_URL}/${endpointType}/top_rated?api_key=${API_KEY}&language=en-US&page=${page}`);
     if (!res.ok) throw new Error(`Error fetching top-rated movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -222,9 +227,13 @@ export async function fetchTopRatedMovies(page = 1) {
   }
 }
 
-export async function fetchRecentMovies(page = 1) {
+// UPDATED: Accepts mediaType and switches to 'on_the_air' for TV
+export async function fetchRecentMovies(mediaType = "movie", page = 1) {
   try {
-    const res = await fetch(`${BASE_URL}/movie/now_playing?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const endpointType = mediaType === "all" ? "movie" : mediaType;
+    // TMDB uses 'now_playing' for movies and 'on_the_air' for TV
+    const path = endpointType === "tv" ? "on_the_air" : "now_playing";
+    const res = await fetch(`${BASE_URL}/${endpointType}/${path}?api_key=${API_KEY}&language=en-US&page=${page}`);
     if (!res.ok) throw new Error(`Error fetching recent movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);

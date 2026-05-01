@@ -31,16 +31,16 @@ const NavBar = () => {
     }
   };
 
+  // UPDATED: Added 'type' to each link so we know what to filter by
   const navBarLinks = [
-    { label: "Home", link: "/" },
-    { label: "Movies", link: "/movies" },
-    { label: "TV Shows", link: "/tv" },
-    { label: "Top Rated", link: "/top-rated" },
-    { label: "Recently Added", link: "/recent" },
+    { label: "Home", link: "/", type: "all" },
+    { label: "Movies", link: "/movies", type: "movie" },
+    { label: "TV Shows", link: "/tv", type: "tv" },
   ];
 
-  const handleLinkClick = (path) => {
-    navigate(path);
+  // UPDATED: Added 'type' parameter and passed it into navigate state
+  const handleLinkClick = (path, type) => {
+    navigate(path, { state: { filterType: type } });
     setIsMenuOpen(false);
     search(""); 
   };
@@ -62,7 +62,8 @@ const NavBar = () => {
             <li
               key={index}
               className="hover:text-red-500 transition cursor-pointer uppercase tracking-[0.2em] font-black text-[11px]"
-              onClick={() => handleLinkClick(item.link)}
+              // UPDATED: Pass item.type to handleLinkClick
+              onClick={() => handleLinkClick(item.link, item.type)}
             >
               {item.label}
             </li>
@@ -151,21 +152,22 @@ const NavBar = () => {
         <div className="absolute top-full left-0 w-full bg-zinc-950/98 backdrop-blur-2xl border-t border-white/10 lg:hidden shadow-2xl">
           <ul className="flex flex-col p-4 space-y-1 text-white font-black uppercase tracking-[0.2em] text-[10px]">
             {navBarLinks.map((item, index) => (
-              <li key={index} className="py-4 border-b border-white/5 px-4 active:bg-white/5" onClick={() => handleLinkClick(item.link)}>
+              // UPDATED: Pass item.type to handleLinkClick for mobile menu
+              <li key={index} className="py-4 border-b border-white/5 px-4 active:bg-white/5" onClick={() => handleLinkClick(item.link, item.type)}>
                 {item.label}
               </li>
             ))}
             
             {/* Profile link inside mobile menu if logged in */}
             {user && (
-               <li className="py-4 border-b border-white/5 px-4 text-white flex items-center justify-between" onClick={() => handleLinkClick("/profile")}>
+               <li className="py-4 border-b border-white/5 px-4 text-white flex items-center justify-between" onClick={() => handleLinkClick("/profile", "profile")}>
                 <span>My Profile</span>
                 <User size={14} />
               </li>
             )}
 
             {!user ? (
-              <li className="py-4 text-red-600 px-4" onClick={() => handleLinkClick("/login")}>
+              <li className="py-4 text-red-600 px-4" onClick={() => handleLinkClick("/login", "login")}>
                 Initialize Session
               </li>
             ) : (

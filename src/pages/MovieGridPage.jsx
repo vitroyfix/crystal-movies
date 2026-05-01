@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import MovieCard from "../components/movies/MovieCard.jsx";
+import NavBar from "../components/layout/NavBar.jsx";
+import { useLocation } from "react-router-dom"; 
 import {
   fetchTrending,
   fetchTopRatedMovies,
@@ -13,6 +15,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 
+// ── Genre map (expanded) ──────────────────────────────────────────────────────
 const GENRES = [
   { name: "Action", id: 28 },
   { name: "Adventure", id: 12 },
@@ -110,7 +113,14 @@ const MovieRow = ({ title, data, loading }) => {
   );
 };
 
-const MovieGrid = () => {
+// ── Main component ────────────────────────────────────────────────────────────
+// IMPORTANT: Notice the { type } prop!
+const MovieGrid = ({ type }) => {
+  const location = useLocation(); 
+  
+  // IMPORTANT: Notice how we grab the mediaType!
+  const mediaType = type || location.state?.filterType || "all"; 
+
   const [trending, setTrending] = useState([]);
   const [topRated, setTopRated] = useState([]);
   const [recentlyAdded, setRecentlyAdded] = useState([]);
@@ -127,14 +137,21 @@ const MovieGrid = () => {
   const observerRef = useRef(null);
   const loadingRef = useRef(false);
 
-  // ── Initial rows — uses the correct dedicated API functions ────────────────
+  // ── Reset genre when mediaType changes from NavBar ─────────────────────────
+  useEffect(() => {
+    resetToHome();
+  }, [mediaType]);
+
+  // ── Initial rows ───────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      setLoading(true);
       try {
+        // IMPORTANT: Passing mediaType to the API functions!
         const [t, tr, r] = await Promise.all([
-          fetchTrending(),
-          fetchTopRatedMovies(),   // ← was fetchMovies("top_rated")
-          fetchRecentMovies(),     // ← was fetchMovies("now_playing")
+          fetchTrending(mediaType),
+          fetchTopRatedMovies(mediaType),
+          fetchRecentMovies(mediaType),
         ]);
         setTrending(dedup(t));
         setTopRated(dedup(tr));
@@ -145,7 +162,7 @@ const MovieGrid = () => {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [mediaType]); // <-- Runs every time mediaType changes
 
   // ── IntersectionObserver ───────────────────────────────────────────────────
   const setupObserver = useCallback(() => {
@@ -168,7 +185,8 @@ const MovieGrid = () => {
                 const genre = GENRES.find((g) => g.name === prevGenre);
                 if (!genre) return prevGenre;
 
-                fetchByGenre(genre.id, nextPage)
+                // IMPORTANT: Passing mediaType here too!
+                fetchByGenre(genre.id, nextPage, mediaType)
                   .then((data) => {
                     const fresh = data.filter((m) => !existingIds.has(m.id));
                     if (!fresh.length) {
@@ -198,7 +216,7 @@ const MovieGrid = () => {
     );
 
     if (sentinelRef.current) observerRef.current.observe(sentinelRef.current);
-  }, []);
+  }, [mediaType]); // <-- Dependency added
 
   useEffect(() => {
     if (selectedGenre && hasMore && !isFiltering) {
@@ -226,7 +244,8 @@ const MovieGrid = () => {
     setHasMore(true);
 
     try {
-      const data = await fetchByGenre(genre.id, 1);
+      // IMPORTANT: Passing mediaType here too!
+      const data = await fetchByGenre(genre.id, 1, mediaType);
       setGenreMovies(data);
       setHasMore(data.length >= 20);
     } catch (e) {
@@ -270,6 +289,7 @@ const MovieGrid = () => {
 
       {/* ── Section header ─────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <NavBar/>
         <div className="space-y-1">
           <p className="text-[9px] uppercase tracking-[0.35em] text-white/20 font-black">
             {selectedGenre ? `Genre · ${genreMovies.length} titles loaded` : "Discover"}

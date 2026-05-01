@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import MovieCard from "./MovieCard.jsx";
+import { useLocation } from "react-router-dom"; // <-- ADDED: useLocation
 import {
   fetchTrending,
   fetchTopRatedMovies,
@@ -126,6 +127,9 @@ const MovieRow = ({ title, data, loading }) => {
 
 // ── Main component ────────────────────────────────────────────────────────────
 const MovieGrid = () => {
+  const location = useLocation(); // <-- ADDED: Get router location
+  const mediaType = location.state?.filterType || "all"; // <-- ADDED: Extract filter type
+
   const [trending, setTrending] = useState([]);
   const [topRated, setTopRated] = useState([]);
   const [recentlyAdded, setRecentlyAdded] = useState([]);
@@ -143,14 +147,21 @@ const MovieGrid = () => {
   const observerRef = useRef(null);
   const loadingRef = useRef(false);
 
+  // ── Reset genre when mediaType changes from NavBar ─────────────────────────
+  useEffect(() => {
+    resetToHome();
+  }, [mediaType]);
+
   // ── Initial rows ───────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
+      setLoading(true);
       try {
+        // <-- UPDATED: Passed mediaType to API calls
         const [t, tr, r] = await Promise.all([
-          fetchTrending(),
-          fetchTopRatedMovies(),
-          fetchRecentMovies(),
+          fetchTrending(mediaType),
+          fetchTopRatedMovies(mediaType),
+          fetchRecentMovies(mediaType),
         ]);
         // Dedupe each row independently — no cross-array filtering
         setTrending(dedup(t));
@@ -162,7 +173,7 @@ const MovieGrid = () => {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [mediaType]); // <-- UPDATED: Re-run when mediaType changes
 
   // ── IntersectionObserver wiring ────────────────────────────────────────────
   const setupObserver = useCallback(() => {
@@ -185,7 +196,8 @@ const MovieGrid = () => {
                 const genre = GENRES.find((g) => g.name === prevGenre);
                 if (!genre) return prevGenre;
 
-                fetchByGenre(genre.id, nextPage)
+                // <-- UPDATED: Passed mediaType to infinite scroll
+                fetchByGenre(genre.id, nextPage, mediaType)
                   .then((data) => {
                     const fresh = data.filter((m) => !existingIds.has(m.id));
                     if (!fresh.length) {
@@ -215,7 +227,7 @@ const MovieGrid = () => {
     );
 
     if (sentinelRef.current) observerRef.current.observe(sentinelRef.current);
-  }, []);
+  }, [mediaType]); // <-- UPDATED: Added mediaType to dependencies
 
   useEffect(() => {
     if (selectedGenre && hasMore && !isFiltering) {
@@ -244,7 +256,8 @@ const MovieGrid = () => {
     setTotalResults(0);
 
     try {
-      const data = await fetchByGenre(genre.id, 1);
+      // <-- UPDATED: Passed mediaType to genre fetch
+      const data = await fetchByGenre(genre.id, 1, mediaType);
       setGenreMovies(data);
       setHasMore(data.length >= 20);
       setTotalResults(data.length);
