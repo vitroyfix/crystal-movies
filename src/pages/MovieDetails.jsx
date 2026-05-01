@@ -16,17 +16,17 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://handhelds-varieties-championships-bridal.trycloudflare.com/api/scrape-stream";
-const SUBS_URL    = "https://handhelds-varieties-championships-bridal.trycloudflare.com/api/subs";
+const BACKEND_URL = "http://localhost:8088/api/fetch-stream";
+const SUBS_URL    = "http://localhost:8088/api/subs";
 const SECRET_KEY  = import.meta.env.VITE_ENCRYPTION_KEY;
 const API_KEY     = import.meta.env.VITE_API_KEY;
-const TMDB_KEY    = import.meta.env.VITE_TMDB_API_KEY;
+const TMDB_KEY    = import.meta.env.VITE_TMDB_API_KEY; 
 const TMDB_BASE   = "https://api.themoviedb.org/3";
 const IMG         = "https://image.tmdb.org/t/p";
 
-const backendBase = BACKEND_URL.replace("/api/scrape-stream", ""); // ← must match your route
+const backendBase = BACKEND_URL.replace("/api/fetch-stream", "");
 
-// ─── Retry config (NEW — from v2) ─────────────────────────────────────────────
+// ─── Retry config ─────────────────────────────────────────────────────────────
 const MAX_AUTO_RETRIES = 6;
 const RETRY_DELAY_MS   = 3000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -205,6 +205,7 @@ const MovieDetails = () => {
   const [selectedSeason, setSelectedSeason] = useState(1);
   const [selectedEpisode, setSelectedEpisode] = useState(1);
   const [resumeData, setResumeData] = useState(null);
+  const [ageRating, setAgeRating] = useState("NR");
 
   // Player state
   const [activeStream, setActiveStream] = useState(null);
@@ -239,7 +240,7 @@ const MovieDetails = () => {
   const playerRef = useRef(null);
   const blobUrlsRef = useRef([]);
 
-  const scrapeAbortRef = useRef(null);
+  const fetchAbortRef = useRef(null);
 
   const revokeBlobUrls = () => {
     blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -485,10 +486,10 @@ const MovieDetails = () => {
   );
 
   // ── Stream resolution with automatic retry ────────────────────────────────
-  const triggerBackendScrape = async (mId, mType, s, e) => {
-    if (scrapeAbortRef.current) scrapeAbortRef.current.abort();
+  const triggerBackendFetch = async (mId, mType, s, e) => {
+    if (fetchAbortRef.current) fetchAbortRef.current.abort();
     const abortController = new AbortController();
-    scrapeAbortRef.current = abortController;
+    fetchAbortRef.current = abortController;
 
     setIsCleaning(true); setCleanUrl(null); setError(null); setActiveMenu(null);
     setSubtitleTracks([]); setSelectedSubtitle(-1);
@@ -705,6 +706,38 @@ const MovieDetails = () => {
             data.seasons.find((s) => s.season_number > 0) || data.seasons[0];
           setSelectedSeason(first.season_number);
         }
+
+        // Fetch Age Rating Certification dynamically using Bearer Token
+        try {
+          const certEndpoint = resolvedMediaType === "movie" ? "release_dates" : "content_ratings";
+          const certRes = await fetch(
+            `${TMDB_BASE}/${resolvedMediaType}/${id}/${certEndpoint}`,
+            {
+              headers: {
+                Authorization: `Bearer ${TMDB_KEY}`,
+                accept: "application/json"
+              }
+            }
+          );
+          const certData = await certRes.json();
+          let cert = "NR";
+          if (resolvedMediaType === "movie" && certData.results) {
+            const usData = certData.results.find((r) => r.iso_3166_1 === "US");
+            if (usData && usData.release_dates && usData.release_dates.length > 0) {
+              const validCert = usData.release_dates.find((rd) => rd.certification);
+              if (validCert) cert = validCert.certification;
+            }
+          } else if (resolvedMediaType === "tv" && certData.results) {
+            const usData = certData.results.find((r) => r.iso_3166_1 === "US");
+            if (usData && usData.rating) {
+              cert = usData.rating;
+            }
+          }
+          setAgeRating(cert || "NR");
+        } catch (e) {
+          setAgeRating("NR");
+        }
+
       } catch {} finally {
         setLoading(false);
       }
@@ -719,21 +752,35 @@ const MovieDetails = () => {
       fetchSeasonDetails(id, selectedSeason).then(setEpisodes);
   }, [selectedSeason, id, resolvedMediaType]);
 
+  // Using Bearer Token for Cast
   const fetchCast = async () => {
     try {
       const res = await fetch(
-        `${TMDB_BASE}/${resolvedMediaType}/${id}/credits?api_key=${TMDB_KEY}`
+        `${TMDB_BASE}/${resolvedMediaType}/${id}/credits`,
+        {
+          headers: {
+            Authorization: `Bearer ${TMDB_KEY}`,
+            accept: "application/json"
+          }
+        }
       );
       const data = await res.json();
       setCast((data.cast || []).slice(0, 20));
     } catch {}
   };
 
+  // Using Bearer Token for Related
   const fetchRelated = async (page = 1) => {
     setRelatedLoading(true);
     try {
       const res = await fetch(
-        `${TMDB_BASE}/${resolvedMediaType}/${id}/recommendations?api_key=${TMDB_KEY}&page=${page}`
+        `${TMDB_BASE}/${resolvedMediaType}/${id}/recommendations?page=${page}`,
+        {
+          headers: {
+            Authorization: `Bearer ${TMDB_KEY}`,
+            accept: "application/json"
+          }
+        }
       );
       const data = await res.json();
       const results = (data.results || []).filter((r) => r.poster_path);
@@ -761,7 +808,7 @@ const MovieDetails = () => {
     setSelectedEpisode(epNum);
     setActiveStream(true);
     setActiveMenu(null);
-    triggerBackendScrape(id, resolvedMediaType, selectedSeason, epNum);
+    triggerBackendFetch(id, resolvedMediaType, selectedSeason, epNum);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -771,10 +818,10 @@ const MovieDetails = () => {
       setSelectedSeason(resumeData.season);
       setSelectedEpisode(resumeData.episode);
       setActiveStream(true);
-      triggerBackendScrape(id, "tv", resumeData.season, resumeData.episode);
+      triggerBackendFetch(id, "tv", resumeData.season, resumeData.episode);
     } else {
       setActiveStream(true);
-      triggerBackendScrape(
+      triggerBackendFetch(
         id,
         resolvedMediaType,
         selectedSeason,
@@ -820,7 +867,7 @@ const MovieDetails = () => {
 
   useEffect(() => {
     return () => {
-      if (scrapeAbortRef.current) scrapeAbortRef.current.abort();
+      if (fetchAbortRef.current) fetchAbortRef.current.abort();
     };
   }, []);
 
@@ -1020,7 +1067,7 @@ const MovieDetails = () => {
                 </span>
                 <span className="w-px h-3 bg-white/20" />
                 <span className="bg-red-600/80 text-white px-1.5 py-0.5 rounded text-[9px] font-black uppercase">
-                  12+
+                  {ageRating}
                 </span>
                 {runtime && (
                   <>
@@ -1453,7 +1500,7 @@ const MovieDetails = () => {
             </div>
             <button
               onClick={() => {
-                if (scrapeAbortRef.current) scrapeAbortRef.current.abort(); // ← ADD THIS LINE
+                if (fetchAbortRef.current) fetchAbortRef.current.abort();
                 if (videoRef.current) saveProgress(videoRef.current.currentTime);
                 setActiveStream(null); stopTrailer(); setCleanUrl(null); setActiveMenu(null);
                 revokeBlobUrls();
@@ -1495,7 +1542,7 @@ const MovieDetails = () => {
                 </div>
                 <button
                   onClick={() =>
-                    triggerBackendScrape(
+                    triggerBackendFetch(
                       id,
                       resolvedMediaType,
                       selectedSeason,

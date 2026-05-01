@@ -18,15 +18,25 @@ export const SearchProvider = ({ children }) => {
     const debounce = setTimeout(async () => {
       setLoading(true);
       try {
+        // Corrected Fetch: Removed api_key from URL and moved to Headers
         const res = await fetch(
-          `${import.meta.env.VITE_BASE_URL}/search/multi?api_key=${import.meta.env.VITE_TMDB_API_KEY}&language=en-US&query=${encodeURIComponent(
+          `https://api.themoviedb.org/3/search/multi?language=en-US&query=${encodeURIComponent(
             query
-          )}&page=1&include_adult=false`
+          )}&page=1&include_adult=false`,
+          {
+            method: 'GET',
+            headers: {
+              // Use Bearer authentication for v4 tokens
+              Authorization: `Bearer ${import.meta.env.VITE_TMDB_API_KEY}`,
+              accept: 'application/json',
+            },
+          }
         );
+
         if (!res.ok) throw new Error("Failed to search");
         const data = await res.json();
 
-                const filtered = (data.results || [])
+        const filtered = (data.results || [])
           .filter((item) => item.media_type === "movie" || item.media_type === "tv")
           .map((item) => ({
             id: item.id,

@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 
-// Fallback to the standard TMDb v3 URL if the env variable is missing
-const API_KEY = import.meta.env.VITE_TMDB_API_KEY;
-const BASE_URL = import.meta.env.VITE_BASE_URL || "https://api.themoviedb.org/3";
+const API_KEY = import.meta.env.VITE_TMDB_API_KEY; 
+const TMDB_BASE_URL = "https://api.themoviedb.org/3"; 
 const YT_API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 
 export default function useTrailer(id, type = "movie", autoPlay = true, seasonNumber = null, title = "") {
@@ -12,7 +11,6 @@ export default function useTrailer(id, type = "movie", autoPlay = true, seasonNu
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Prevent fetching if id is null or undefined (this stops the 404s on mount)
     if (!id || id === "undefined") return;
 
     async function fetchTrailer() {
@@ -20,15 +18,21 @@ export default function useTrailer(id, type = "movie", autoPlay = true, seasonNu
       setError(null);
 
       try {
-        let endpoint = `${BASE_URL}/${type}/${id}/videos?api_key=${API_KEY}&language=en-US`;
+        // Removed ?api_key= from the URL
+        let endpoint = `${TMDB_BASE_URL}/${type}/${id}/videos?language=en-US`;
         
         if (type === "tv" && seasonNumber !== null) {
-          endpoint = `${BASE_URL}/tv/${id}/season/${seasonNumber}/videos?api_key=${API_KEY}&language=en-US`;
+          endpoint = `${TMDB_BASE_URL}/tv/${id}/season/${seasonNumber}/videos?language=en-US`;
         }
 
-        const res = await fetch(endpoint);
+        // Added the Bearer Token to the headers
+        const res = await fetch(endpoint, {
+          headers: {
+            Authorization: `Bearer ${API_KEY}`,
+            accept: "application/json",
+          }
+        });
         
-        // If the response is not OK (404, 401), throw error
         if (!res.ok) {
           const errorData = await res.json();
           throw new Error(errorData.status_message || "Failed to fetch trailer from TMDb");
@@ -39,7 +43,6 @@ export default function useTrailer(id, type = "movie", autoPlay = true, seasonNu
           (vid) => (vid.type === "Trailer" || vid.type === "Teaser") && vid.site === "YouTube"
         );
 
-        // Fallback to YouTube Search API if TMDb has no video for a TV Season
         if (!trailer && type === "tv" && seasonNumber !== null && YT_API_KEY) {
           const seasonQuery = `${title} Season ${seasonNumber} Trailer`;
           const ytRes = await fetch(

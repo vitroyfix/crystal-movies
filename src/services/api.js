@@ -1,6 +1,15 @@
+// src/services/api.js
+
 const API_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
+
+const TMDB_OPTIONS = {
+  headers: {
+    Authorization: `Bearer ${API_KEY}`,
+    accept: "application/json",
+  },
+};
 
 const languageMap = {
   en: "English",
@@ -49,12 +58,32 @@ function mapMovies(data) {
   });
 }
 
-// UPDATED: Now accepts mediaType as the 3rd argument
+/**
+ * FIXED SEARCH FUNCTION
+ * Uses Authorization Header instead of URL parameter
+ */
+export async function searchMedia(query, page = 1) {
+  if (!query) return [];
+  try {
+    const res = await fetch(
+      `${BASE_URL}/search/multi?query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=${page}`,
+      TMDB_OPTIONS
+    );
+    if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+    const data = await res.json();
+    return mapMovies(data);
+  } catch (error) {
+    console.error("Failed to search media:", error);
+    return [];
+  }
+}
+
 export async function fetchByGenre(genreId, page = 1, mediaType = "movie") {
   try {
     const endpointType = mediaType === "all" ? "movie" : mediaType;
     const res = await fetch(
-      `${BASE_URL}/discover/${endpointType}?api_key=${API_KEY}&with_genres=${genreId}&sort_by=popularity.desc&language=en-US&page=${page}`
+      `${BASE_URL}/discover/${endpointType}?with_genres=${genreId}&sort_by=popularity.desc&language=en-US&page=${page}`,
+      TMDB_OPTIONS
     );
     if (!res.ok) throw new Error(`Error fetching by genre: ${res.status}`);
     const data = await res.json();
@@ -67,7 +96,7 @@ export async function fetchByGenre(genreId, page = 1, mediaType = "movie") {
 
 export async function fetchMovies(page = 1) {
   try {
-    const res = await fetch(`${BASE_URL}/movie/popular?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const res = await fetch(`${BASE_URL}/movie/popular?language=en-US&page=${page}`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -77,10 +106,9 @@ export async function fetchMovies(page = 1) {
   }
 }
 
-// UPDATED: Accepts mediaType (all, movie, or tv)
 export async function fetchTrending(mediaType = "all") {
   try {
-    const res = await fetch(`${BASE_URL}/trending/${mediaType}/day?api_key=${API_KEY}&language=en-US`);
+    const res = await fetch(`${BASE_URL}/trending/${mediaType}/day?language=en-US`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching trending: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -92,7 +120,7 @@ export async function fetchTrending(mediaType = "all") {
 
 export async function fetchTrailer(id, mediaType = "movie") {
   try {
-    const res = await fetch(`${BASE_URL}/${mediaType}/${id}/videos?api_key=${API_KEY}&language=en-US`);
+    const res = await fetch(`${BASE_URL}/${mediaType}/${id}/videos?language=en-US`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching trailer: ${res.status}`);
     const data = await res.json();
     const trailer = data.results?.find((v) => v.type === "Trailer" && v.site === "YouTube");
@@ -105,7 +133,7 @@ export async function fetchTrailer(id, mediaType = "movie") {
 
 export async function fetchTvSeasonTrailers(tvId, seasonNumber) {
   try {
-    const res = await fetch(`${BASE_URL}/tv/${tvId}/season/${seasonNumber}/videos?api_key=${API_KEY}&language=en-US`);
+    const res = await fetch(`${BASE_URL}/tv/${tvId}/season/${seasonNumber}/videos?language=en-US`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching season trailers: ${res.status}`);
     const data = await res.json();
     return data.results?.filter(v => v.type === "Trailer" && v.site === "YouTube") || [];
@@ -118,8 +146,8 @@ export async function fetchTvSeasonTrailers(tvId, seasonNumber) {
 export async function fetchMovieDetails(id, mediaType = "movie", season = 1, episode = 1) {
   try {
     const [detailsRes, creditsRes, trailerKey] = await Promise.all([
-      fetch(`${BASE_URL}/${mediaType}/${id}?api_key=${API_KEY}&language=en-US&append_to_response=external_ids,seasons`),
-      fetch(`${BASE_URL}/${mediaType}/${id}/credits?api_key=${API_KEY}&language=en-US`),
+      fetch(`${BASE_URL}/${mediaType}/${id}?language=en-US&append_to_response=external_ids,seasons`, TMDB_OPTIONS),
+      fetch(`${BASE_URL}/${mediaType}/${id}/credits?language=en-US`, TMDB_OPTIONS),
       fetchTrailer(id, mediaType),
     ]);
 
@@ -129,12 +157,9 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
     const details = await detailsRes.json();
     const credits = await creditsRes.json();
     
-    // --- ENABLE MOVIE/TV STREAMING URLS (Updated with season/episode support) ---
     const streams = PROVIDERS.map(p => ({
       provider: p.name,
-      url: mediaType === "movie" 
-        ? p.movie(id) 
-        : p.tv(id, season, episode) 
+      url: mediaType === "movie" ? p.movie(id) : p.tv(id, season, episode) 
     }));
 
     let plot = details.overview;
@@ -203,7 +228,7 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
 
 export async function fetchTVShows(page = 1) {
   try {
-    const res = await fetch(`${BASE_URL}/tv/popular?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const res = await fetch(`${BASE_URL}/tv/popular?language=en-US&page=${page}`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching TV shows: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -213,11 +238,10 @@ export async function fetchTVShows(page = 1) {
   }
 }
 
-// UPDATED: Accepts mediaType as the first argument, defaults to movie
 export async function fetchTopRatedMovies(mediaType = "movie", page = 1) {
   try {
     const endpointType = mediaType === "all" ? "movie" : mediaType;
-    const res = await fetch(`${BASE_URL}/${endpointType}/top_rated?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const res = await fetch(`${BASE_URL}/${endpointType}/top_rated?language=en-US&page=${page}`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching top-rated movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -227,13 +251,11 @@ export async function fetchTopRatedMovies(mediaType = "movie", page = 1) {
   }
 }
 
-// UPDATED: Accepts mediaType and switches to 'on_the_air' for TV
 export async function fetchRecentMovies(mediaType = "movie", page = 1) {
   try {
     const endpointType = mediaType === "all" ? "movie" : mediaType;
-    // TMDB uses 'now_playing' for movies and 'on_the_air' for TV
     const path = endpointType === "tv" ? "on_the_air" : "now_playing";
-    const res = await fetch(`${BASE_URL}/${endpointType}/${path}?api_key=${API_KEY}&language=en-US&page=${page}`);
+    const res = await fetch(`${BASE_URL}/${endpointType}/${path}?language=en-US&page=${page}`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching recent movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -243,10 +265,9 @@ export async function fetchRecentMovies(mediaType = "movie", page = 1) {
   }
 }
 
-// RESTORED DETAILED EPISODE DATA WITH IMAGES
 export async function fetchSeasonDetails(tvId, seasonNumber) {
   try {
-    const res = await fetch(`${BASE_URL}/tv/${tvId}/season/${seasonNumber}?api_key=${API_KEY}&language=en-US`);
+    const res = await fetch(`${BASE_URL}/tv/${tvId}/season/${seasonNumber}?language=en-US`, TMDB_OPTIONS);
     if (!res.ok) throw new Error(`Error fetching season details: ${res.status}`);
     const data = await res.json();
     
