@@ -16,8 +16,8 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://mpg-dev-imposed-pounds.trycloudflare.com/api/fetch-stream";
-const SUBS_URL    = "https://mpg-dev-imposed-pounds.trycloudflare.com/api/subs";
+const BACKEND_URL = "https://velocity-opinion-writing-magic.trycloudflare.com/api/fetch-stream";
+const SUBS_URL    = "https://velocity-opinion-writing-magic.trycloudflare.com/api/subs";
 const SECRET_KEY  = import.meta.env.VITE_ENCRYPTION_KEY;
 const API_KEY     = import.meta.env.VITE_API_KEY;
 const TMDB_KEY    = import.meta.env.VITE_TMDB_API_KEY; 
