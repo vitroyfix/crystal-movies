@@ -1,63 +1,105 @@
-import { Facebook, Youtube, Twitter, Instagram } from "lucide-react";
+import { Film, Github, Twitter, Instagram } from "lucide-react";
 
 const Footer = () => {
+  const year = new Date().getFullYear();
+
   return (
-    <footer className="bg-gray-900 text-gray-300 px-6 py-10">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-8">
-        <div className="col-span-2">
-          <h1 className="text-white text-xl font-bold mb-3">Crystal Movies</h1>
-          <p className="text-sm leading-relaxed">
-            Your ultimate destination for discovering and exploring the world of
-            cinema. From blockbusters to indie gems, we've got it all.
-          </p>
-        </div>
-        <div>
-          <h6 className="text-white font-semibold mb-3">Follow Us</h6>
-          <div className="flex gap-4">
-            <Facebook size={22} className="hover:text-blue-500 cursor-pointer" />
-            <Youtube size={22} className="hover:text-red-500 cursor-pointer" />
-            <Twitter size={22} className="hover:text-sky-400 cursor-pointer" />
-            <Instagram size={22} className="hover:text-pink-500 cursor-pointer" />
+    <footer
+      style={{
+        background: "#080808",
+        borderTop: "1px solid rgba(255,255,255,0.06)",
+        fontFamily: "'Sora', sans-serif",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@1,700&display=swap');
+
+        .footer-link {
+          font-size: 10px; font-weight: 500; letter-spacing: .07em; text-transform: uppercase;
+          color: rgba(255,255,255,0.25);
+          transition: color .2s ease;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .footer-link:hover { color: rgba(212,168,83,0.85); }
+
+        .footer-social {
+          width: 34px; height: 34px; border-radius: 10px;
+          display: flex; align-items: center; justify-content: center;
+          border: 1px solid rgba(255,255,255,0.07);
+          background: rgba(255,255,255,0.03);
+          color: rgba(255,255,255,0.3);
+          transition: all .2s ease;
+          cursor: pointer;
+        }
+        .footer-social:hover {
+          border-color: rgba(212,168,83,0.3);
+          background: rgba(212,168,83,0.08);
+          color: #d4a853;
+          transform: translateY(-2px);
+        }
+
+        .footer-divider {
+          height: 1px;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07) 30%, rgba(255,255,255,0.07) 70%, transparent);
+        }
+
+        .footer-wordmark {
+          font-family: 'Playfair Display', serif;
+          font-style: italic; font-weight: 700;
+          font-size: 20px; color: white;
+        }
+        .footer-wordmark span { color: #d4a853; }
+      `}</style>
+
+      <div className="px-6 md:px-14 lg:px-20 py-10">
+
+        {/* ── Top row ─────────────────────────────────────────────────────── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+
+          {/* Wordmark + tagline */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2.5">
+              <div className="w-0.5 h-5 rounded-full" style={{ background: "#d4a853" }} />
+              <span className="footer-wordmark">Crystal<span>.</span></span>
+            </div>
+            <p style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", letterSpacing: ".07em" }}>
+              Premium streaming · No ads · Ever
+            </p>
+          </div>
+
+          {/* Links */}
+          <nav className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            {["Help Center", "Privacy Policy", "Terms of Service", "Contact"].map(lbl => (
+              <span key={lbl} className="footer-link">{lbl}</span>
+            ))}
+          </nav>
+
+          {/* Socials */}
+          <div className="flex items-center gap-2">
+            {[
+              { Icon: Twitter,   title: "Twitter" },
+              { Icon: Instagram, title: "Instagram" },
+            ].map(({ Icon, title }) => (
+              <div key={title} className="footer-social" title={title}>
+                <Icon size={14} />
+              </div>
+            ))}
           </div>
         </div>
-        <div>
-          <h6 className="text-white font-semibold mb-3">Support</h6>
-          <ul className="space-y-2 text-sm">
-            <li className="hover:text-white cursor-pointer">Help Center</li>
-            <li className="hover:text-white cursor-pointer">Contact Us</li>
-            <li className="hover:text-white cursor-pointer">Privacy Policy</li>
-            <li className="hover:text-white cursor-pointer">Terms of Service</li>
-          </ul>
+
+        <div className="footer-divider my-8" />
+
+        {/* ── Bottom row ──────────────────────────────────────────────────── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", letterSpacing: ".06em" }}>
+            © {year} Crystal Movies. All rights reserved.
+          </p>
+          <div className="flex items-center gap-1.5" style={{ color: "rgba(255,255,255,0.12)", fontSize: 10 }}>
+            <Film size={11} style={{ color: "#d4a853", opacity: 0.6 }} />
+            <span style={{ letterSpacing: ".06em" }}>Built for cinema lovers · Nairobi</span>
+          </div>
         </div>
-        <div>
-          <h6 className="text-white font-semibold mb-3">Company</h6>
-          <ul className="space-y-2 text-sm">
-            <li className="hover:text-white cursor-pointer">About Us</li>
-            <li className="hover:text-white cursor-pointer">Careers</li>
-            <li className="hover:text-white cursor-pointer">Press</li>
-            <li className="hover:text-white cursor-pointer">Blog</li>
-          </ul>
-        </div>
-        <div>
-          <h6 className="text-white font-semibold mb-3">Discover</h6>
-          <ul className="space-y-2 text-sm">
-            <li className="hover:text-white cursor-pointer">New Releases</li>
-            <li className="hover:text-white cursor-pointer">Top Rated</li>
-            <li className="hover:text-white cursor-pointer">Trending</li>
-          </ul>
-        </div>
-        <div>
-          <h6 className="text-white font-semibold mb-3">Contact</h6>
-          <p className="text-sm">Email@moviedb.com</p>
-          <p className="text-sm">+25476543879</p>
-          <p className="text-sm">Nairobi</p>
-        </div>
-      </div>
-      <div className="mt-10 border-t border-gray-700 pt-6 text-center text-sm text-gray-400">
-        <p>
-          &copy; {new Date().getFullYear()} Crystal Movies. All rights reserved. 
-          Built with passion for cinema lovers.
-        </p>
       </div>
     </footer>
   );

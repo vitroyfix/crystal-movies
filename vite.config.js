@@ -19,7 +19,7 @@ export default defineConfig({
       },
       // NEW: Proxies your movie player '/api' requests to your VPS Backend
       '/api': {
-        target: 'https://reaching-showing-press-selections.trycloudflare.com/', 
+        target: 'http://localhost:8088', 
         changeOrigin: true,
         secure: false,
       }

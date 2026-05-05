@@ -1,30 +1,48 @@
 import { useState, useEffect } from "react";
 
+/**
+ * useSeasonTrailers
+ *
+ * Loads trailers for a specific TV season by calling a method exposed on
+ * the `movie` object: `movie.fetchTvSeasonTrailers(id, season)`.
+ *
+ * @param {object|null} movie          - Movie/show object with fetchTvSeasonTrailers method
+ * @param {number|null} selectedSeason - Season number to load trailers for
+ */
 export default function useSeasonTrailers(movie, selectedSeason) {
   const [seasonTrailers, setSeasonTrailers] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [loading,        setLoading]        = useState(false);
+  const [error,          setError]          = useState(null);
 
   useEffect(() => {
-    async function loadSeasonTrailers() {
-      if (!movie || !selectedSeason || !movie.fetchTvSeasonTrailers) return;
+    // Guard: requires a valid movie object with the fetcher method
+    if (!movie || !selectedSeason || typeof movie.fetchTvSeasonTrailers !== "function") {
+      setSeasonTrailers([]);
+      return;
+    }
 
+    let cancelled = false;
+
+    async function loadSeasonTrailers() {
       setLoading(true);
       setError(null);
 
       try {
         const trailers = await movie.fetchTvSeasonTrailers(movie.id, selectedSeason);
-        setSeasonTrailers(trailers);
+        if (!cancelled) setSeasonTrailers(trailers ?? []);
       } catch (err) {
-        console.error("Failed to load season trailers:", err);
-        setError(err.message);
-        setSeasonTrailers([]);
+        if (!cancelled) {
+          setError(err.message);
+          setSeasonTrailers([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     loadSeasonTrailers();
+
+    return () => { cancelled = true; };
   }, [movie, selectedSeason]);
 
   return { seasonTrailers, loading, error };
