@@ -97,7 +97,7 @@ const Footer = () => {
           </p>
           <div className="flex items-center gap-1.5" style={{ color: "rgba(255,255,255,0.12)", fontSize: 10 }}>
             <Film size={11} style={{ color: "#d4a853", opacity: 0.6 }} />
-            <span style={{ letterSpacing: ".06em" }}>Built for cinema lovers · Nairobi</span>
+            <span style={{ letterSpacing: ".06em" }}>Built for cinema lovers</span>
           </div>
         </div>
       </div>

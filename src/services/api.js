@@ -3,7 +3,6 @@
 const API_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
 
-// ✅ FIXED: Hardcoded TMDB Base URL so it never returns 'undefined'
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
 const TMDB_OPTIONS = {
@@ -21,16 +20,16 @@ const languageMap = {
 
 // --- STREAMING PROVIDERS CONFIGURATION ---
 const PROVIDERS = [
-  { 
-    name: 'VidLink', 
+  {
+    name: "VidLink",
     movie: (id) => `https://vidlink.pro/movie/${id}?primaryColor=e50914&nextbutton=true`,
-    tv: (id, s, e) => `https://vidlink.pro/tv/${id}/${s}/${e}?primaryColor=e50914&nextbutton=true`
+    tv: (id, s, e) => `https://vidlink.pro/tv/${id}/${s}/${e}?primaryColor=e50914&nextbutton=true`,
   },
-  { 
-    name: 'VidSrc', 
+  {
+    name: "VidSrc",
     movie: (id) => `https://vidsrc-embed.ru/embed/movie/${id}`,
-    tv: (id, s, e) => `https://vidsrc-embed.ru/embed/tv/${id}/${s}-${e}`
-  }
+    tv: (id, s, e) => `https://vidsrc-embed.ru/embed/tv/${id}/${s}-${e}`,
+  },
 ];
 
 function mapMovies(data) {
@@ -65,6 +64,60 @@ export async function searchMedia(query, page = 1) {
   } catch (error) {
     console.error("Failed to search media:", error);
     return [];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  fetchGenres — Dynamic genre list directly from TMDB.
+//
+//  Why this beats a hardcoded GENRES array:
+//  • TMDB's /genre/list endpoint ONLY returns genres with actual content.
+//    Empty genres never appear — no runtime filtering needed.
+//  • When TMDB adds new genre classifications, they auto-appear on next load.
+//  • For mediaType "all": merges movie + TV lists and deduplicates by ID.
+//
+//  Follows the exact same fetch pattern as every other function in this file.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function fetchGenres(mediaType = "all") {
+  try {
+    if (mediaType === "all") {
+      // Fire both requests in parallel — same pattern as fetchMovieDetails()
+      const [movieRes, tvRes] = await Promise.all([
+        fetch(`${TMDB_BASE_URL}/genre/movie/list?language=en-US`, TMDB_OPTIONS),
+        fetch(`${TMDB_BASE_URL}/genre/tv/list?language=en-US`,    TMDB_OPTIONS),
+      ]);
+
+      if (!movieRes.ok) throw new Error(`Error fetching movie genres: ${movieRes.status}`);
+      if (!tvRes.ok)    throw new Error(`Error fetching TV genres: ${tvRes.status}`);
+
+      const [movieData, tvData] = await Promise.all([
+        movieRes.json(),
+        tvRes.json(),
+      ]);
+
+      const movieGenres = movieData.genres || [];
+      const tvGenres    = tvData.genres    || [];
+
+      // Merge and deduplicate by genre ID (movies take priority on duplicates)
+      const seen = new Set();
+      return [...movieGenres, ...tvGenres].filter((g) =>
+        seen.has(g.id) ? false : seen.add(g.id)
+      );
+    }
+
+    // Single media type — one clean request
+    const type = mediaType === "tv" ? "tv" : "movie";
+    const res = await fetch(
+      `${TMDB_BASE_URL}/genre/${type}/list?language=en-US`,
+      TMDB_OPTIONS
+    );
+    if (!res.ok) throw new Error(`Error fetching genres: ${res.status}`);
+    const data = await res.json();
+    return data.genres || [];
+
+  } catch (error) {
+    console.error("Failed to fetch genres:", error);
+    return []; // Graceful fallback — genre strip simply won't render
   }
 }
 
@@ -123,10 +176,13 @@ export async function fetchTrailer(id, mediaType = "movie") {
 
 export async function fetchTvSeasonTrailers(tvId, seasonNumber) {
   try {
-    const res = await fetch(`${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}/videos?language=en-US`, TMDB_OPTIONS);
+    const res = await fetch(
+      `${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}/videos?language=en-US`,
+      TMDB_OPTIONS
+    );
     if (!res.ok) throw new Error(`Error fetching season trailers: ${res.status}`);
     const data = await res.json();
-    return data.results?.filter(v => v.type === "Trailer" && v.site === "YouTube") || [];
+    return data.results?.filter((v) => v.type === "Trailer" && v.site === "YouTube") || [];
   } catch (error) {
     console.error("Failed to fetch season trailers:", error);
     return [];
@@ -146,17 +202,19 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
 
     const details = await detailsRes.json();
     const credits = await creditsRes.json();
-    
-    const streams = PROVIDERS.map(p => ({
+
+    const streams = PROVIDERS.map((p) => ({
       provider: p.name,
-      url: mediaType === "movie" ? p.movie(id) : p.tv(id, season, episode) 
+      url: mediaType === "movie" ? p.movie(id) : p.tv(id, season, episode),
     }));
 
     let plot = details.overview;
     const imdbId = details.external_ids?.imdb_id;
     if (imdbId) {
       try {
-        const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&plot=full&apikey=${OMDB_API_KEY}`);
+        const omdbRes = await fetch(
+          `https://www.omdbapi.com/?i=${imdbId}&plot=full&apikey=${OMDB_API_KEY}`
+        );
         const omdbData = await omdbRes.json();
         if (omdbData.Plot && omdbData.Plot !== "N/A") plot = omdbData.Plot;
       } catch {
@@ -165,32 +223,50 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
     }
 
     let director = "N/A";
-    let writers = "N/A";
+    let writers  = "N/A";
 
     if (mediaType === "movie") {
-      director = credits.crew?.find(c => c.job === "Director")?.name || "N/A";
-      writers = credits.crew?.filter(c => c.job === "Writer" || c.department === "Writing").map(w => w.name).join(", ") || "N/A";
+      director = credits.crew?.find((c) => c.job === "Director")?.name || "N/A";
+      writers  = credits.crew
+        ?.filter((c) => c.job === "Writer" || c.department === "Writing")
+        .map((w) => w.name)
+        .join(", ") || "N/A";
     } else {
-      const creatorNames = details.created_by?.map(c => c.name).join(", ");
-      director = creatorNames || credits.crew?.find(c => c.job === "Executive Producer")?.name || "N/A";
-      writers = credits.crew?.filter(c => c.job === "Writer" || c.job === "Story Editor" || c.department === "Writing").map(w => w.name).slice(0, 3).join(", ") || "N/A";
+      const creatorNames = details.created_by?.map((c) => c.name).join(", ");
+      director = creatorNames || credits.crew?.find((c) => c.job === "Executive Producer")?.name || "N/A";
+      writers  = credits.crew
+        ?.filter((c) => c.job === "Writer" || c.job === "Story Editor" || c.department === "Writing")
+        .map((w) => w.name)
+        .slice(0, 3)
+        .join(", ") || "N/A";
     }
 
-    const cast = credits.cast?.slice(0, 8).map(a => a.name).join(", ") || "N/A";
-    const genre = details.genres?.map(g => g.name).join(", ") || "N/A";
-    const badgeYear = details.release_date?.split("-")[0] || details.first_air_date?.split("-")[0] || "N/A";
+    const cast   = credits.cast?.slice(0, 8).map((a) => a.name).join(", ") || "N/A";
+    const genre  = details.genres?.map((g) => g.name).join(", ") || "N/A";
+    const badgeYear =
+      details.release_date?.split("-")[0] ||
+      details.first_air_date?.split("-")[0] ||
+      "N/A";
 
     let runtime = "N/A";
     if (mediaType === "movie") {
-      runtime = details.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : "N/A";
+      runtime = details.runtime
+        ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m`
+        : "N/A";
     } else {
-      runtime = details.episode_run_time?.length ? `${details.episode_run_time[0]}m` : details.seasons?.length ? "Varies" : "N/A";
+      runtime = details.episode_run_time?.length
+        ? `${details.episode_run_time[0]}m`
+        : details.seasons?.length
+        ? "Varies"
+        : "N/A";
     }
 
     return {
       id,
-      poster: details.poster_path ? `https://image.tmdb.org/t/p/w500${details.poster_path}` : "/no-poster.png",
-      backdrop_path: details.backdrop_path, 
+      poster: details.poster_path
+        ? `https://image.tmdb.org/t/p/w500${details.poster_path}`
+        : "/no-poster.png",
+      backdrop_path: details.backdrop_path,
       title: details.title || details.name,
       badgeYear,
       rating: details.vote_average ? details.vote_average.toFixed(1) : 0,
@@ -201,7 +277,8 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
       writer: writers,
       cast,
       genre,
-      language: languageMap[details.original_language] || details.original_language || "N/A",
+      language:
+        languageMap[details.original_language] || details.original_language || "N/A",
       mediaType,
       trailerKey,
       streams,
@@ -218,7 +295,10 @@ export async function fetchMovieDetails(id, mediaType = "movie", season = 1, epi
 
 export async function fetchTVShows(page = 1) {
   try {
-    const res = await fetch(`${TMDB_BASE_URL}/tv/popular?language=en-US&page=${page}`, TMDB_OPTIONS);
+    const res = await fetch(
+      `${TMDB_BASE_URL}/tv/popular?language=en-US&page=${page}`,
+      TMDB_OPTIONS
+    );
     if (!res.ok) throw new Error(`Error fetching TV shows: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -231,7 +311,10 @@ export async function fetchTVShows(page = 1) {
 export async function fetchTopRatedMovies(mediaType = "movie", page = 1) {
   try {
     const endpointType = mediaType === "all" ? "movie" : mediaType;
-    const res = await fetch(`${TMDB_BASE_URL}/${endpointType}/top_rated?language=en-US&page=${page}`, TMDB_OPTIONS);
+    const res = await fetch(
+      `${TMDB_BASE_URL}/${endpointType}/top_rated?language=en-US&page=${page}`,
+      TMDB_OPTIONS
+    );
     if (!res.ok) throw new Error(`Error fetching top-rated movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -245,7 +328,10 @@ export async function fetchRecentMovies(mediaType = "movie", page = 1) {
   try {
     const endpointType = mediaType === "all" ? "movie" : mediaType;
     const path = endpointType === "tv" ? "on_the_air" : "now_playing";
-    const res = await fetch(`${TMDB_BASE_URL}/${endpointType}/${path}?language=en-US&page=${page}`, TMDB_OPTIONS);
+    const res = await fetch(
+      `${TMDB_BASE_URL}/${endpointType}/${path}?language=en-US&page=${page}`,
+      TMDB_OPTIONS
+    );
     if (!res.ok) throw new Error(`Error fetching recent movies: ${res.status}`);
     const data = await res.json();
     return mapMovies(data);
@@ -257,15 +343,19 @@ export async function fetchRecentMovies(mediaType = "movie", page = 1) {
 
 export async function fetchSeasonDetails(tvId, seasonNumber) {
   try {
-    const res = await fetch(`${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}?language=en-US`, TMDB_OPTIONS);
+    const res = await fetch(
+      `${TMDB_BASE_URL}/tv/${tvId}/season/${seasonNumber}?language=en-US`,
+      TMDB_OPTIONS
+    );
     if (!res.ok) throw new Error(`Error fetching season details: ${res.status}`);
     const data = await res.json();
-    
     return data.episodes.map((ep) => ({
       episode_number: ep.episode_number,
       name: ep.name || `Episode ${ep.episode_number}`,
       overview: ep.overview || "No description available.",
-      still_path: ep.still_path ? `https://image.tmdb.org/t/p/w500${ep.still_path}` : null,
+      still_path: ep.still_path
+        ? `https://image.tmdb.org/t/p/w500${ep.still_path}`
+        : null,
       air_date: ep.air_date,
     }));
   } catch (error) {
