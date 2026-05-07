@@ -329,7 +329,8 @@ const CastModal = ({ member, onClose, navigate }) => {
 
 // ─── Score Ring ───────────────────────────────────────────────────────────────
 const ScoreRing = ({ score, size = 52 }) => {
-  const gradientId = useId();
+  const uid = useId().replace(/[#:]/g, "");
+  const gradientId = `sg-${uid}`;
   const num = parseFloat(score) || 0;
   const pct = (num / 10) * 100;
   const r = 18;
@@ -356,7 +357,7 @@ const ScoreRing = ({ score, size = 52 }) => {
           cx="22"
           cy="22"
           r={r}
-          stroke={`url(${gradientId})`}
+          stroke={`url(#${gradientId})`}
           strokeWidth="3"
           fill="none"
           strokeDasharray={`${dash} ${circ}`}
@@ -367,7 +368,7 @@ const ScoreRing = ({ score, size = 52 }) => {
         />
         <defs>
           <linearGradient
-            id={gradientId.replace(/[#:]/g, "")}
+            id={gradientId}
             x1="0%"
             y1="0%"
             x2="100%"
@@ -1939,30 +1940,19 @@ const MovieDetails = () => {
     }
   };
 
-  const handleEpisodeSelect = useCallback(
-    (epNum) => {
-      if (isTrailerPlaying) stopTrailer();
-      if (videoRef.current) saveProgress(videoRef.current.currentTime);
-      autoNextCancelled.current = false;
-      if (autoNextRef.current) clearInterval(autoNextRef.current);
-      setAutoNextCountdown(null);
-      setShowNextEpBtn(false);
-      setSelectedEpisode(epNum);
-      setActiveStream(true);
-      setActiveMenu(null);
-      triggerBackendFetch(id, resolvedMediaType, selectedSeason, epNum);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    },
-    [
-      isTrailerPlaying,
-      stopTrailer,
-      saveProgress,
-      triggerBackendFetch,
-      id,
-      resolvedMediaType,
-      selectedSeason,
-    ],
-  );
+  const handleEpisodeSelect = (epNum) => {
+    if (isTrailerPlaying) stopTrailer();
+    if (videoRef.current) saveProgress(videoRef.current.currentTime);
+    autoNextCancelled.current = false;
+    if (autoNextRef.current) clearInterval(autoNextRef.current);
+    setAutoNextCountdown(null);
+    setShowNextEpBtn(false);
+    setSelectedEpisode(epNum);
+    setActiveStream(true);
+    setActiveMenu(null);
+    triggerBackendFetch(id, resolvedMediaType, selectedSeason, epNum);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const handleResumeClick = () => {
     if (isTrailerPlaying) stopTrailer();
