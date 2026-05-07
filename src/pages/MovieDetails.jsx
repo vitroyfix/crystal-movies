@@ -1143,6 +1143,7 @@ const MovieDetails = () => {
   const closePlayer = useCallback(() => {
     if (fetchAbortRef.current) fetchAbortRef.current.abort();
     if (videoRef.current) saveProgress(videoRef.current.currentTime);
+    stopTrailer();
     destroyVideo();
     setActiveStream(null);
     setCleanUrl(null);
@@ -1150,7 +1151,7 @@ const MovieDetails = () => {
     setShowNextEpBtn(false);
     setAutoNextCountdown(null);
     if (autoNextRef.current) clearInterval(autoNextRef.current);
-  }, [destroyVideo, saveProgress]);
+  }, [destroyVideo, saveProgress, stopTrailer]);
 
   // ── Auth / Supabase ───────────────────────────────────────────────────────
   useEffect(() => {
