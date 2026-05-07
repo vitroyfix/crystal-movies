@@ -1117,6 +1117,29 @@ const MovieDetails = () => {
     revokeBlobUrls();
   }, []);
 
+  const saveProgress = async (ct) => {
+    if (!currentUser || !movie || !videoRef.current) return;
+    const key =
+      resolvedMediaType === "tv"
+        ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}`
+        : `movie_${id}`;
+    try {
+      await supabase.from("user_progress").upsert(
+        {
+          user_id: currentUser.uid,
+          media_id: key,
+          time: ct,
+          title: movie?.title || movie?.name,
+          poster: movie?.backdrop_path || movie?.poster_path,
+          type: resolvedMediaType,
+          season: resolvedMediaType === "tv" ? selectedSeason : null,
+          episode: resolvedMediaType === "tv" ? selectedEpisode : null,
+          last_updated: new Date().toISOString(),
+        },
+        { onConflict: "user_id, media_id" },
+      );
+    } catch {}
+  };
   const closePlayer = useCallback(() => {
     if (fetchAbortRef.current) fetchAbortRef.current.abort();
     if (videoRef.current) saveProgress(videoRef.current.currentTime);
@@ -1232,29 +1255,6 @@ const MovieDetails = () => {
     }
   };
 
-  const saveProgress = async (ct) => {
-    if (!currentUser || !movie || !videoRef.current) return;
-    const key =
-      resolvedMediaType === "tv"
-        ? `tv_${id}_s${selectedSeason}_e${selectedEpisode}`
-        : `movie_${id}`;
-    try {
-      await supabase.from("user_progress").upsert(
-        {
-          user_id: currentUser.uid,
-          media_id: key,
-          time: ct,
-          title: movie?.title || movie?.name,
-          poster: movie?.backdrop_path || movie?.poster_path,
-          type: resolvedMediaType,
-          season: resolvedMediaType === "tv" ? selectedSeason : null,
-          episode: resolvedMediaType === "tv" ? selectedEpisode : null,
-          last_updated: new Date().toISOString(),
-        },
-        { onConflict: "user_id, media_id" },
-      );
-    } catch {}
-  };
 
   const getSavedProgress = async () => {
     if (!currentUser) return 0;
