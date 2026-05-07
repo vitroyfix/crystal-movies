@@ -1140,6 +1140,12 @@ const MovieDetails = () => {
       );
     } catch {}
   };
+
+  const {
+    trailerUrl,
+    isPlaying: isTrailerPlaying,
+    playTrailer,
+    stopTrailer,
   } = useTrailer(
     id,
     resolvedMediaType,
@@ -1147,6 +1153,7 @@ const MovieDetails = () => {
     selectedSeason,
     movie?.title || movie?.name || "",
   );
+
   const closePlayer = useCallback(() => {
     if (fetchAbortRef.current) fetchAbortRef.current.abort();
     if (videoRef.current) saveProgress(videoRef.current.currentTime);
