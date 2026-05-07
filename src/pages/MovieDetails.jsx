@@ -1290,13 +1290,6 @@ const MovieDetails = () => {
     }
   };
 
-  // ── Trailer hook ──────────────────────────────────────────────────────────
-  const {
-    trailerUrl,
-    isPlaying: isTrailerPlaying,
-    playTrailer,
-    stopTrailer,
-
   // ── Auto-next ─────────────────────────────────────────────────────────────
   const startAutoNextCountdown = useCallback(() => {
     if (!nextEpisode || autoNextCancelled.current) return;
