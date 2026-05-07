@@ -1140,6 +1140,13 @@ const MovieDetails = () => {
       );
     } catch {}
   };
+  } = useTrailer(
+    id,
+    resolvedMediaType,
+    false,
+    selectedSeason,
+    movie?.title || movie?.name || "",
+  );
   const closePlayer = useCallback(() => {
     if (fetchAbortRef.current) fetchAbortRef.current.abort();
     if (videoRef.current) saveProgress(videoRef.current.currentTime);
@@ -1282,13 +1289,6 @@ const MovieDetails = () => {
     isPlaying: isTrailerPlaying,
     playTrailer,
     stopTrailer,
-  } = useTrailer(
-    id,
-    resolvedMediaType,
-    false,
-    selectedSeason,
-    movie?.title || movie?.name || "",
-  );
 
   // ── Auto-next ─────────────────────────────────────────────────────────────
   const startAutoNextCountdown = useCallback(() => {
