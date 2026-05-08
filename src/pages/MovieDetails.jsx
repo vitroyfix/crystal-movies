@@ -47,9 +47,9 @@ import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL =
-  "https://ian-ideal-reports-television.trycloudflare.com/api/fetch-stream";
+  "https://titans-neutral-genetic-pci.trycloudflare.com/api/fetch-stream";
 const SUBS_URL =
-  "https://ian-ideal-reports-television.trycloudflare.com/api/subs";
+  "https://titans-neutral-genetic-pci.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -569,7 +569,7 @@ const PlayerControls = ({
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      v.play();
+      v.play().catch(() => {});
       setIsPlaying(true);
     } else {
       v.pause();
@@ -1109,10 +1109,9 @@ const MovieDetails = () => {
     }
     const v = videoRef.current;
     if (v) {
-      v.pause();
-      v.removeAttribute("src");
-      v.src = "";
-      v.load();
+      try {
+        v.pause();
+      } catch (e) {}
     }
     revokeBlobUrls();
   }, []);
@@ -1403,8 +1402,6 @@ const MovieDetails = () => {
   }, []);
 
   // ── triggerBackendFetch ───────────────────────────────────────────────────
-  // FIX: Removed the infinite while() loop — it was hammering the backend forever on failure.
-  // Now it tries MAX_AUTO_RETRIES times and stops cleanly.
   const triggerBackendFetch = useCallback(
     async (mId, mType, s, e) => {
       if (fetchAbortRef.current) fetchAbortRef.current.abort();
@@ -1473,7 +1470,6 @@ const MovieDetails = () => {
         }
       }
 
-      // All retries exhausted
       if (!ctrl.signal.aborted) setIsCleaning(false);
     },
     [destroyVideo],
@@ -1539,11 +1535,11 @@ const MovieDetails = () => {
   // ── HLS init ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!cleanUrl || !videoRef.current) return;
+    let isCancelled = false;
     const video = videoRef.current;
     clearWatchdog();
     watchdogFired.current = false;
 
-    // FIX 7-8: Define event handlers at useEffect scope so they can be cleaned up
     const handlePlaying = () => {
       clearTimeout(watchdogBufferTimer.current);
       clearTimeout(watchdogManifestTimer.current);
@@ -1570,11 +1566,8 @@ const MovieDetails = () => {
     };
 
     const initPlayer = async () => {
-      // FIX 1: Start Supabase fetch in background immediately — don't block HLS init on it.
-      // Previously `await getSavedProgress()` blocked the entire function before HLS even started.
       const savedTimePromise = getSavedProgress();
 
-      // Set manifest watchdog BEFORE any async work so it's always armed
       watchdogManifestTimer.current = setTimeout(
         () => rotateToAlt(cleanUrl),
         WATCHDOG_MANIFEST_MS,
@@ -1582,13 +1575,37 @@ const MovieDetails = () => {
 
       try {
         const res = await fetch(cleanUrl, { method: "HEAD" });
-        const ct = res.headers.get("content-type");
+        if (isCancelled) return;
+        
+        const ct = res.headers.get("content-type") || "";
 
-        if (ct?.includes("mpegurl") || cleanUrl.includes(".m3u8")) {
+        // Intercept 403/404 errors AND invalid content types (like JSON API errors or GIF anti-bot traps) 
+        if (!res.ok || ct.includes("application/json") || ct.includes("text/html") || ct.includes("image/")) {
+          console.warn(`[initPlayer] Stream invalid (Status: ${res.status}, Type: ${ct}). Invalidating cache...`);
+          clearWatchdog();
+          const { cacheKey, source } = parseProxyUrl(cleanUrl);
+          if (cacheKey) {
+            // Tell backend to purge this dead stream
+            await fetch(`${backendBase}/api/validate-stream`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
+              body: JSON.stringify({ cacheKey, source }),
+            }).catch(() => {});
+          }
+          
+          if (isCancelled) return;
+
+          await new Promise(r => setTimeout(r, 600));
+          if (isCancelled) return;
+
+          rotateToAlt(cleanUrl);
+          return;
+        }
+
+        if (ct.includes("mpegurl") || cleanUrl.includes(".m3u8")) {
           if (Hls.isSupported()) {
             if (hlsRef.current) hlsRef.current.destroy();
 
-            // FIX 2: Tuned HLS config for faster start and smoother playback
             hlsRef.current = new Hls({
               xhrSetup: (xhr) => {
                 xhr.withCredentials = false;
@@ -1596,23 +1613,19 @@ const MovieDetails = () => {
               enableWorker: true,
               startLevel: -1,
               capLevelToPlayerSize: true,
-              // Smaller initial buffer = faster playback start (was 60/120)
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
               maxBufferSize: 60 * 1000 * 1000,
               backBufferLength: 15,
-              // Conservative bandwidth estimate prevents quality thrashing at startup
               abrEwmaDefaultEstimate: 1_000_000,
               abrBandWidthFactor: 0.85,
               abrBandWidthUpFactor: 0.6,
-              // Retry configs — prevents fatal errors from transient network hiccups
               manifestLoadingMaxRetry: 4,
               manifestLoadingRetryDelay: 1000,
               fragLoadingMaxRetry: 6,
               fragLoadingRetryDelay: 1000,
               levelLoadingMaxRetry: 4,
               levelLoadingRetryDelay: 1000,
-              // HLS.js built-in stall nudger — recovers minor stalls automatically
               nudgeMaxRetry: 5,
               nudgeOffset: 0.2,
               lowLatencyMode: false,
@@ -1627,15 +1640,11 @@ const MovieDetails = () => {
               setQualityLevels(hlsRef.current.levels || []);
               setSelectedQuality(-1);
 
-              // FIX 3: Now we await saved time — HLS is ready so seek/play happens immediately
               const savedTime = await savedTimePromise;
               if (savedTime > 0) video.currentTime = savedTime;
               video.play().catch(() => {});
               setIsPlaying(true);
 
-              // FIX 4: readyState >= 3 (HAVE_FUTURE_DATA) is the correct threshold —
-              // >= 2 (HAVE_CURRENT_DATA) can pass even when the video is stuck buffering.
-              // Also skip if user paused intentionally.
               watchdogBufferTimer.current = setTimeout(() => {
                 if (!video || video.readyState >= 3 || video.paused) return;
                 rotateToAlt(cleanUrl);
@@ -1646,7 +1655,6 @@ const MovieDetails = () => {
               if (!data.fatal) return;
 
               if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                // FIX 5: recoverMediaError handles codec/decode issues without source rotation
                 console.warn("HLS media error — attempting auto-recovery");
                 hlsRef.current?.recoverMediaError();
                 return;
@@ -1655,8 +1663,6 @@ const MovieDetails = () => {
               clearWatchdog();
 
               if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                // FIX 6: Network drops are often transient — try restarting load first.
-                // Only rotate source if still stuck after 12 seconds.
                 hlsRef.current?.startLoad();
                 setTimeout(() => {
                   if (
@@ -1703,8 +1709,12 @@ const MovieDetails = () => {
             { once: true },
           );
         }
-      } catch {
-        video.src = cleanUrl;
+      } catch (err) {
+        if (!isCancelled && err.name !== 'AbortError') {
+           console.warn("[initPlayer] Network error during stream check:", err);
+           clearWatchdog();
+           rotateToAlt(cleanUrl);
+        }
       }
 
       // Attach event listeners (handlers defined at useEffect scope level)
@@ -1717,13 +1727,13 @@ const MovieDetails = () => {
 
     initPlayer();
 
-    // FIX 9: Increase progress save interval from 10s to 15s to reduce Supabase write pressure
     progressInterval.current = setInterval(() => {
       if (video && !video.paused && !video.ended)
         saveProgress(video.currentTime);
     }, 15_000);
 
     return () => {
+      isCancelled = true;
       video.removeEventListener("playing", handlePlaying);
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("ended", handleEnded);
@@ -1763,7 +1773,7 @@ const MovieDetails = () => {
         case " ":
         case "k":
           e.preventDefault();
-          v.paused ? v.play() : v.pause();
+          v.paused ? v.play().catch(()=>{}) : v.pause();
           setIsPlaying(!v.paused);
           break;
         case "ArrowRight":
@@ -1811,7 +1821,8 @@ const MovieDetails = () => {
         r instanceof DOMException &&
         (r.message.includes("aborted") ||
           r.message.includes("Invalid URI") ||
-          r.message.includes("media resource"))
+          r.message.includes("media resource") ||
+          r.message.includes("The fetching process"))
       ) {
         e.preventDefault();
       }
@@ -3007,6 +3018,7 @@ const MovieDetails = () => {
             ) : cleanUrl ? (
               <div className="relative w-full h-full">
                 <video
+                  key={cleanUrl || 'empty-video'}
                   ref={videoRef}
                   playsInline
                   crossOrigin="anonymous"
