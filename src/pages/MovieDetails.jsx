@@ -47,9 +47,9 @@ import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL =
-  "https://titans-neutral-genetic-pci.trycloudflare.com/api/fetch-stream";
+  "https://stream-handbook-housewives-supporting.trycloudflare.com/api/fetch-stream";
 const SUBS_URL =
-  "https://titans-neutral-genetic-pci.trycloudflare.com/api/subs";
+  "https://stream-handbook-housewives-supporting.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
