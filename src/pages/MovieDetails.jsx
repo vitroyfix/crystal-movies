@@ -47,9 +47,9 @@ import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL =
-  "https://drew-enquiries-involve-traditional.trycloudflare.com/api/fetch-stream";
+  "https://myth-diameter-her-happened.trycloudflare.com/api/fetch-stream";
 const SUBS_URL =
-  "https://drew-enquiries-involve-traditional.trycloudflare.com/api/subs";
+  "https://myth-diameter-her-happened.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
