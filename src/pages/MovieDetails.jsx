@@ -47,9 +47,9 @@ import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL =
-  "https://yea-sculpture-experiment-graphs.trycloudflare.com/api/fetch-stream";
+  "https://contrary-amendment-repository-documentary.trycloudflare.com/api/fetch-stream";
 const SUBS_URL =
-  "https://yea-sculpture-experiment-graphs.trycloudflare.com/api/subs";
+  "https://contrary-amendment-repository-documentary.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
