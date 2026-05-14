@@ -353,7 +353,7 @@ const HomePage = () => {
       <div style={{ paddingBottom: "5rem" }}>
 
         {/* Core — flows straight out of the hero */}
-        {CORE_ROWS.map((row, idx) => (
+        {CORE_ROWS.map(({ key, ...row }, idx) => (
           <div key={row.key} className="hp-anim" style={{ animationDelay: `${0.05 + idx * 0.1}s` }}>
             <MovieRow {...row} />
           </div>
@@ -361,7 +361,7 @@ const HomePage = () => {
 
         {/* Special Picks */}
         <SectionDivider label="Special Picks" />
-        {SPECIAL_ROWS.map((row, idx) => (
+        {SPECIAL_ROWS.map(({ key, ...row }, idx) => (
           <div key={row.key} className="hp-anim" style={{ animationDelay: `${0.05 + idx * 0.08}s` }}>
             <MovieRow {...row} />
           </div>
@@ -369,7 +369,7 @@ const HomePage = () => {
 
         {/* Browse by Genre */}
         <SectionDivider label="Browse by Genre" />
-        {GENRE_ROWS.map((row, idx) => (
+        {GENRE_ROWS.map(({ key, ...row }, idx) => (
           <div key={row.key} className="hp-anim" style={{ animationDelay: `${0.05 + idx * 0.08}s` }}>
             <MovieRow {...row} />
           </div>
