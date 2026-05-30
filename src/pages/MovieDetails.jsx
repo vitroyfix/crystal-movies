@@ -46,8 +46,8 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL}/api/fetch-stream`;
-const SUBS_URL    = `${import.meta.env.VITE_BACKEND_URL}/api/subs`;
+const BACKEND_URL = "https://birthday-sept-speed-fantastic.trycloudflare.com/api/fetch-stream";
+const SUBS_URL    = "https://birthday-sept-speed-fantastic.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
