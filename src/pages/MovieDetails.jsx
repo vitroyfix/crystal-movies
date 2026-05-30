@@ -47,9 +47,9 @@ import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BACKEND_URL =
-  "https://representatives-jets-helps-bye.trycloudflare.com/api/fetch-stream";
+  "https://birthday-sept-speed-fantastic.trycloudflare.com/api/fetch-stream";
 const SUBS_URL =
-"https://representatives-jets-helps-bye.trycloudflare.com/api/subs";
+"https://birthday-sept-speed-fantastic.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
