@@ -64,6 +64,151 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NEXT_EP_SHOW_BEFORE_END_S = 90;
 const AUTO_NEXT_COUNTDOWN_S = 15;
 
+// ─── Ad domains blocklist ─────────────────────────────────────────────────────
+const AD_DOMAINS = [
+  "whitebit.com",
+  "whitebit",
+  "go.oclasrv.com",
+  "adspyglass.com",
+  "adf.ly",
+  "shorte.st",
+  "clicksfly.com",
+  "clkrevenue.com",
+  "clickadu.com",
+  "adcash.com",
+  "popcash.net",
+  "propellerads.com",
+  "trafficjunky.com",
+  "exoclick.com",
+  "juicyads.com",
+  "plugrush.com",
+  "hilltopads.net",
+  "adsterra.com",
+  "realsrv.com",
+  "oclasrv.com",
+  "bitmedia.io",
+  "coinzilla.io",
+  "cointraffic.io",
+];
+
+const isAdUrl = (url = "") =>
+  AD_DOMAINS.some((d) => url.toLowerCase().includes(d));
+
+// ─── Global Ad Blocker ────────────────────────────────────────────────────────
+const installAdBlock = () => {
+  // 1. Kill window.open completely — ads use this to open new tabs
+  window.open = () => {
+    console.warn("[AdBlock] Blocked window.open()");
+    return null;
+  };
+
+  // 2. Block all link clicks that point outside the app or target _blank
+  document.addEventListener(
+    "click",
+    (e) => {
+      const link = e.target.closest("a");
+      if (!link) return;
+      const href = link.href || "";
+      const isInternal =
+        !href ||
+        href.startsWith(window.location.origin) ||
+        href.startsWith("/") ||
+        href.startsWith("#");
+      if (!isInternal || link.target === "_blank" || isAdUrl(href)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        console.warn("[AdBlock] Blocked link redirect to:", href);
+      }
+    },
+    true, // capture phase — fires before ad scripts
+  );
+
+  // 3. Override location.assign and location.replace
+  try {
+    const origAssign = window.location.assign.bind(window.location);
+    const origReplace = window.location.replace.bind(window.location);
+    const assignOverride = (url) => {
+      if (isAdUrl(url)) {
+        console.warn("[AdBlock] Blocked location.assign to:", url);
+        return;
+      }
+      origAssign(url);
+    };
+    const replaceOverride = (url) => {
+      if (isAdUrl(url)) {
+        console.warn("[AdBlock] Blocked location.replace to:", url);
+        return;
+      }
+      origReplace(url);
+    };
+    window.Location.prototype.assign = assignOverride;
+    window.Location.prototype.replace = replaceOverride;
+  } catch (_) {
+    // Gracefully ignore if browser blocks prototype overrides
+  }
+
+  // 4. Watch for any dynamic <a> tags being injected and strip them
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        // Remove injected ad iframes (not our player iframe)
+        if (
+          node.tagName === "IFRAME" &&
+          !node.classList.contains("player-iframe") &&
+          isAdUrl(node.src || "")
+        ) {
+          node.remove();
+          console.warn("[AdBlock] Removed ad iframe:", node.src);
+        }
+        // Strip ad anchor tags
+        if (node.tagName === "A" && isAdUrl(node.href || "")) {
+          node.removeAttribute("href");
+          node.style.pointerEvents = "none";
+        }
+        // Check children
+        node.querySelectorAll?.("a[href], iframe[src]").forEach((el) => {
+          if (el.tagName === "A" && isAdUrl(el.href)) {
+            el.removeAttribute("href");
+            el.style.pointerEvents = "none";
+          }
+          if (
+            el.tagName === "IFRAME" &&
+            !el.classList.contains("player-iframe") &&
+            isAdUrl(el.src)
+          ) {
+            el.remove();
+          }
+        });
+      }
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // 5. Block postMessage-based redirects from iframes
+  window.addEventListener(
+    "message",
+    (e) => {
+      try {
+        const msg =
+          typeof e.data === "string" ? e.data : JSON.stringify(e.data || "");
+        if (
+          msg.includes("redirect") ||
+          msg.includes("navigate") ||
+          AD_DOMAINS.some((d) => msg.includes(d))
+        ) {
+          e.stopImmediatePropagation();
+          console.warn("[AdBlock] Blocked postMessage redirect");
+        }
+      } catch (_) {}
+    },
+    true,
+  );
+
+  return () => observer.disconnect();
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const getLanguageName = (code, langList) => {
   if (!code) return "—";
@@ -260,7 +405,7 @@ const CastModal = ({ member, onClose, navigate }) => {
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <div className="w-8 h-8 rounded-full border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent border-[1.5px] animate-spin" />
-             </div>
+            </div>
           ) : items.length === 0 ? (
             <div className="text-center py-12 text-white/25 text-sm">
               No {activeTab} found
@@ -365,13 +510,7 @@ const ScoreRing = ({ score, size = 52 }) => {
           }}
         />
         <defs>
-          <linearGradient
-            id={gradientId}
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="0%"
-          >
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor="#f59e0b" />
             <stop offset="100%" stopColor="#ef4444" />
           </linearGradient>
@@ -557,6 +696,7 @@ const PlayerControls = ({
     resetHideTimer();
     return () => clearTimeout(hideTimer.current);
   }, []);
+
   useEffect(() => {
     const fn = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", fn);
@@ -637,6 +777,8 @@ const PlayerControls = ({
         hideTimer.current = setTimeout(() => setShowControls(false), 1200);
       }}
       onClick={(e) => {
+        // Stop any click from bubbling out of the player overlay
+        e.stopPropagation();
         if (e.target === e.currentTarget) togglePlay();
       }}
     >
@@ -740,7 +882,7 @@ const PlayerControls = ({
         <div
           className="mb-3.5 relative group cursor-pointer"
           ref={seekBarRef}
-          onClick={handleSeekClick}
+          onClick={(e) => { e.stopPropagation(); handleSeekClick(e); }}
           onMouseMove={handleSeekHover}
           onMouseLeave={() => setHoverTime(null)}
         >
@@ -779,7 +921,7 @@ const PlayerControls = ({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 md:gap-2">
             <button
-              onClick={togglePlay}
+              onClick={(e) => { e.stopPropagation(); togglePlay(); }}
               className="ctrl-btn p-2.5 rounded-full"
             >
               {isPlaying ? (
@@ -790,62 +932,31 @@ const PlayerControls = ({
             </button>
 
             <button
-              onClick={() => skip(-10)}
+              onClick={(e) => { e.stopPropagation(); skip(-10); }}
               className="ctrl-btn-sm hidden md:flex items-center justify-center w-8 h-8 rounded-full"
               title="-10s"
             >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="white"
-                opacity="0.7"
-              >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="white" opacity="0.7">
                 <path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z" />
                 <path d="M15 3H9l3-3 3 3z" />
-                <text
-                  x="12"
-                  y="16.5"
-                  textAnchor="middle"
-                  fontSize="6.5"
-                  fill="white"
-                  fontWeight="700"
-                >
-                  10
-                </text>
+                <text x="12" y="16.5" textAnchor="middle" fontSize="6.5" fill="white" fontWeight="700">10</text>
               </svg>
             </button>
             <button
-              onClick={() => skip(10)}
+              onClick={(e) => { e.stopPropagation(); skip(10); }}
               className="ctrl-btn-sm hidden md:flex items-center justify-center w-8 h-8 rounded-full"
               title="+10s"
             >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="white"
-                opacity="0.7"
-                style={{ transform: "scaleX(-1)" }}
-              >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="white" opacity="0.7" style={{ transform: "scaleX(-1)" }}>
                 <path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z" />
                 <path d="M15 3H9l3-3 3 3z" />
-                <text
-                  x="12"
-                  y="16.5"
-                  textAnchor="middle"
-                  fontSize="6.5"
-                  fill="white"
-                  fontWeight="700"
-                >
-                  10
-                </text>
+                <text x="12" y="16.5" textAnchor="middle" fontSize="6.5" fill="white" fontWeight="700">10</text>
               </svg>
             </button>
 
             <div className="flex items-center gap-1.5 group/vol">
               <button
-                onClick={handleMuteToggle}
+                onClick={(e) => { e.stopPropagation(); handleMuteToggle(); }}
                 className="ctrl-btn-sm w-8 h-8 flex items-center justify-center rounded-full text-white/70 hover:text-white"
               >
                 {isMuted || volume === 0 ? (
@@ -862,6 +973,7 @@ const PlayerControls = ({
                   step="0.05"
                   value={isMuted ? 0 : volume}
                   onChange={handleVolumeChange}
+                  onClick={(e) => e.stopPropagation()}
                   className="w-20 vol-slider cursor-pointer"
                 />
               </div>
@@ -876,7 +988,7 @@ const PlayerControls = ({
           <div className="flex items-center gap-1.5">
             {audioTracks.length > 1 && (
               <button
-                onClick={toggleAudio}
+                onClick={(e) => { e.stopPropagation(); toggleAudio(); }}
                 className="ctrl-pill text-[9px] uppercase font-bold tracking-widest"
               >
                 {selectedAudio}
@@ -886,9 +998,10 @@ const PlayerControls = ({
             {activeStream && qualityLevels.length > 0 && (
               <div className="relative">
                 <button
-                  onClick={() =>
-                    setActiveMenu((p) => (p === "quality" ? null : "quality"))
-                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenu((p) => (p === "quality" ? null : "quality"));
+                  }}
                   className={`ctrl-pill text-[9px] uppercase font-bold tracking-widest ${activeMenu === "quality" ? "ctrl-pill-active" : ""}`}
                 >
                   {selectedQuality === -1 || !qualityLevels[selectedQuality]
@@ -907,7 +1020,7 @@ const PlayerControls = ({
                     ].map(({ label, idx }) => (
                       <button
                         key={idx}
-                        onClick={() => selectQuality(idx)}
+                        onClick={(e) => { e.stopPropagation(); selectQuality(idx); }}
                         className={`menu-item ${selectedQuality === idx ? "menu-item-active" : ""}`}
                       >
                         {label}
@@ -921,9 +1034,10 @@ const PlayerControls = ({
             {subtitleTracks.length > 0 && (
               <div className="relative">
                 <button
-                  onClick={() =>
-                    setActiveMenu((p) => (p === "subs" ? null : "subs"))
-                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenu((p) => (p === "subs" ? null : "subs"));
+                  }}
                   className={`ctrl-pill text-[9px] font-bold tracking-widest ${activeMenu === "subs" ? "ctrl-pill-active" : ""} ${selectedSubtitle !== -1 ? "ctrl-pill-on" : ""}`}
                 >
                   CC
@@ -940,7 +1054,7 @@ const PlayerControls = ({
                   <div className="menu-popup absolute bottom-full right-0 mb-2 min-w-[170px] max-h-64 overflow-y-auto thin-scroll">
                     <p className="menu-label">Subtitles</p>
                     <button
-                      onClick={() => selectSubtitle(-1)}
+                      onClick={(e) => { e.stopPropagation(); selectSubtitle(-1); }}
                       className={`menu-item ${selectedSubtitle === -1 ? "menu-item-active" : ""}`}
                     >
                       Off
@@ -948,7 +1062,7 @@ const PlayerControls = ({
                     {subtitleTracks.map((t, i) => (
                       <button
                         key={i}
-                        onClick={() => selectSubtitle(i)}
+                        onClick={(e) => { e.stopPropagation(); selectSubtitle(i); }}
                         className={`menu-item ${selectedSubtitle === i ? "menu-item-active" : ""}`}
                       >
                         {getLangName(t.language, langList)}
@@ -963,9 +1077,10 @@ const PlayerControls = ({
             {subtitleTracks.length > 0 && (
               <div className="relative">
                 <button
-                  onClick={() =>
-                    setActiveMenu((p) => (p === "subStyle" ? null : "subStyle"))
-                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenu((p) => (p === "subStyle" ? null : "subStyle"));
+                  }}
                   className={`ctrl-pill ${activeMenu === "subStyle" ? "ctrl-pill-active" : ""}`}
                 >
                   <Settings size={11} />
@@ -976,7 +1091,10 @@ const PlayerControls = ({
               </div>
             )}
 
-            <button onClick={toggleFullscreen} className="ctrl-pill">
+            <button
+              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+              className="ctrl-pill"
+            >
               {isFullscreen ? <Minimize size={11} /> : <Maximize size={11} />}
             </button>
           </div>
@@ -1046,6 +1164,7 @@ const MovieDetails = () => {
   const watchdogManifestTimer = useRef(null);
   const watchdogBufferTimer = useRef(null);
   const watchdogFired = useRef(false);
+  const adBlockCleanupRef = useRef(null);
 
   const [subSize, setSubSize] = useState("Medium");
   const [subBg, setSubBg] = useState("Box");
@@ -1080,6 +1199,15 @@ const MovieDetails = () => {
     video::-webkit-media-text-track-container { overflow: visible !important; z-index: 9999 !important; }`;
   };
 
+  // ── Install ad blocker on mount ────────────────────────────────────────────
+  useEffect(() => {
+    const cleanup = installAdBlock();
+    adBlockCleanupRef.current = cleanup;
+    return () => {
+      if (adBlockCleanupRef.current) adBlockCleanupRef.current();
+    };
+  }, []);
+
   // ── Plumbing: watchdog, destroy, close ────────────────────────────────────
   const revokeBlobUrls = () => {
     blobUrlsRef.current.forEach(URL.revokeObjectURL);
@@ -1108,9 +1236,7 @@ const MovieDetails = () => {
     }
     const v = videoRef.current;
     if (v) {
-      try {
-        v.pause();
-      } catch (e) {}
+      try { v.pause(); } catch (e) {}
     }
     revokeBlobUrls();
   }, []);
@@ -1350,12 +1476,7 @@ const MovieDetails = () => {
       clearWatchdog();
       const { cacheKey, source } = parseProxyUrl(stalledUrl);
       if (!cacheKey) {
-        triggerBackendFetch(
-          id,
-          resolvedMediaType,
-          selectedSeason,
-          selectedEpisode,
-        );
+        triggerBackendFetch(id, resolvedMediaType, selectedSeason, selectedEpisode);
         return;
       }
       const resumeAt = videoRef.current?.currentTime || 0;
@@ -1373,12 +1494,7 @@ const MovieDetails = () => {
         } catch {}
         await sleep(ALT_POLL_INTERVAL_MS);
       }
-      triggerBackendFetch(
-        id,
-        resolvedMediaType,
-        selectedSeason,
-        selectedEpisode,
-      );
+      triggerBackendFetch(id, resolvedMediaType, selectedSeason, selectedEpisode);
     },
     [id, resolvedMediaType, selectedSeason, selectedEpisode],
   );
@@ -1550,9 +1666,7 @@ const MovieDetails = () => {
       clearTimeout(watchdogBufferTimer.current);
       clearTimeout(watchdogManifestTimer.current);
     };
-
     const handlePause = () => saveProgress(video.currentTime);
-
     const handleEnded = () => {
       saveProgress(0);
       setIsPlaying(false);
@@ -1562,14 +1676,10 @@ const MovieDetails = () => {
         setActiveStream(null);
       }
     };
-
     const handleStalled = () => {
       console.warn("Video stalled — HLS.js nudger will recover");
     };
-
-    const handleWaiting = () => {
-      // Normal buffering pause — do nothing
-    };
+    const handleWaiting = () => {};
 
     const initPlayer = async () => {
       const savedTimePromise = getSavedProgress();
@@ -1582,28 +1692,33 @@ const MovieDetails = () => {
       try {
         const res = await fetch(cleanUrl, { method: "HEAD" });
         if (isCancelled) return;
-        
+
         const ct = res.headers.get("content-type") || "";
 
-        // Intercept 403/404 errors AND invalid content types (like JSON API errors or GIF anti-bot traps) 
-        if (!res.ok || ct.includes("application/json") || ct.includes("text/html") || ct.includes("image/")) {
-          console.warn(`[initPlayer] Stream invalid (Status: ${res.status}, Type: ${ct}). Invalidating cache...`);
+        if (
+          !res.ok ||
+          ct.includes("application/json") ||
+          ct.includes("text/html") ||
+          ct.includes("image/")
+        ) {
+          console.warn(
+            `[initPlayer] Stream invalid (Status: ${res.status}, Type: ${ct}). Invalidating cache...`,
+          );
           clearWatchdog();
           const { cacheKey, source } = parseProxyUrl(cleanUrl);
           if (cacheKey) {
-            // Tell backend to purge this dead stream
             await fetch(`${backendBase}/api/validate-stream`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": API_KEY,
+              },
               body: JSON.stringify({ cacheKey, source }),
             }).catch(() => {});
           }
-          
           if (isCancelled) return;
-
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise((r) => setTimeout(r, 600));
           if (isCancelled) return;
-
           rotateToAlt(cleanUrl);
           return;
         }
@@ -1613,9 +1728,7 @@ const MovieDetails = () => {
             if (hlsRef.current) hlsRef.current.destroy();
 
             hlsRef.current = new Hls({
-              xhrSetup: (xhr) => {
-                xhr.withCredentials = false;
-              },
+              xhrSetup: (xhr) => { xhr.withCredentials = false; },
               enableWorker: true,
               startLevel: -1,
               capLevelToPlayerSize: true,
@@ -1659,15 +1772,12 @@ const MovieDetails = () => {
 
             hlsRef.current.on(Hls.Events.ERROR, (_, data) => {
               if (!data.fatal) return;
-
               if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                 console.warn("HLS media error — attempting auto-recovery");
                 hlsRef.current?.recoverMediaError();
                 return;
               }
-
               clearWatchdog();
-
               if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                 hlsRef.current?.startLoad();
                 setTimeout(() => {
@@ -1685,7 +1795,6 @@ const MovieDetails = () => {
               }
             });
           } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            // Safari native HLS
             video.src = cleanUrl;
             video.addEventListener(
               "loadedmetadata",
@@ -1700,7 +1809,6 @@ const MovieDetails = () => {
             );
           }
         } else {
-          // Direct MP4
           clearWatchdog();
           video.src = cleanUrl;
           video.type = "video/mp4";
@@ -1716,14 +1824,13 @@ const MovieDetails = () => {
           );
         }
       } catch (err) {
-        if (!isCancelled && err.name !== 'AbortError') {
-           console.warn("[initPlayer] Network error during stream check:", err);
-           clearWatchdog();
-           rotateToAlt(cleanUrl);
+        if (!isCancelled && err.name !== "AbortError") {
+          console.warn("[initPlayer] Network error during stream check:", err);
+          clearWatchdog();
+          rotateToAlt(cleanUrl);
         }
       }
 
-      // Attach event listeners (handlers defined at useEffect scope level)
       video.addEventListener("playing", handlePlaying);
       video.addEventListener("pause", handlePause);
       video.addEventListener("ended", handleEnded);
@@ -1768,7 +1875,7 @@ const MovieDetails = () => {
     return () => clearTimeout(timer);
   }, [selectedSubtitle, subtitleTracks, cleanUrl]);
 
-  // ── Global key events ────────────────────────────────────────────────────
+  // ── Global key events ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!activeStream) return;
     const fn = (e) => {
@@ -1779,7 +1886,7 @@ const MovieDetails = () => {
         case " ":
         case "k":
           e.preventDefault();
-          v.paused ? v.play().catch(()=>{}) : v.pause();
+          v.paused ? v.play().catch(() => {}) : v.pause();
           setIsPlaying(!v.paused);
           break;
         case "ArrowRight":
@@ -1819,7 +1926,7 @@ const MovieDetails = () => {
     return () => document.removeEventListener("mousedown", fn);
   }, []);
 
-  // ── Unhandled rejection suppressor ───────────────────────────────────────
+  // ── Unhandled rejection suppressor ────────────────────────────────────────
   useEffect(() => {
     const fn = (e) => {
       const r = e.reason;
@@ -2080,12 +2187,8 @@ const MovieDetails = () => {
     ...(resolvedMediaType === "tv"
       ? [{ key: "episodes", label: "Episodes", Icon: Tv }]
       : []),
-    ...(cast.length
-      ? [{ key: "cast", label: "Cast & Crew", Icon: Users }]
-      : []),
-    ...(related.length
-      ? [{ key: "related", label: "More Like This", Icon: Film }]
-      : []),
+    ...(cast.length ? [{ key: "cast", label: "Cast & Crew", Icon: Users }] : []),
+    ...(related.length ? [{ key: "related", label: "More Like This", Icon: Film }] : []),
   ];
 
   return (
@@ -2156,14 +2259,13 @@ const MovieDetails = () => {
         .rating-badge{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);color:rgba(255,255,255,0.55);}
         .collection-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;overflow:hidden;transition:all .3s ease;cursor:pointer;}
         .collection-card:hover{border-color:rgba(212,168,83,0.35);transform:translateY(-2px);box-shadow:0 12px 36px rgba(0,0,0,0.45);}
+        /* Player container blocks all pointer events from leaking outside */
+        .player-container { pointer-events: all; }
         ${getSubCss()}
       `}</style>
 
       <button
-        onClick={() => {
-          closePlayer();
-          navigate(-1);
-        }}
+        onClick={() => { closePlayer(); navigate(-1); }}
         className="fixed top-5 left-4 md:top-7 md:left-7 z-[60] flex items-center gap-2 px-3.5 py-2 rounded-full transition-all group"
         style={{
           background: "rgba(8,8,8,0.7)",
@@ -2190,88 +2292,32 @@ const MovieDetails = () => {
           alt=""
           aria-hidden="true"
           className="absolute inset-0 w-full h-full object-cover object-center"
-          style={{
-            transform: "scale(1.07)",
-            filter: "brightness(0.38) saturate(1.1)",
-          }}
+          style={{ transform: "scale(1.07)", filter: "brightness(0.38) saturate(1.1)" }}
         />
-        <div
-          className="absolute inset-0 z-[1]"
-          style={{
-            background:
-              "linear-gradient(105deg, rgba(8,8,8,0.98) 0%, rgba(8,8,8,0.78) 45%, rgba(8,8,8,0.15) 100%)",
-          }}
-        />
-        <div
-          className="absolute inset-0 z-[1]"
-          style={{
-            background:
-              "linear-gradient(to top, #080808 0%, rgba(8,8,8,0.6) 30%, transparent 60%)",
-          }}
-        />
-        <div
-          className="absolute inset-0 z-[1]"
-          style={{
-            background:
-              "radial-gradient(ellipse at 15% 65%, rgba(212,168,83,0.05) 0%, transparent 50%)",
-          }}
-        />
-        <div
-          className="absolute inset-0 z-[1] opacity-[0.03]"
-          style={{
-            backgroundImage:
-              "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-            backgroundSize: "180px",
-          }}
-        />
+        <div className="absolute inset-0 z-[1]" style={{ background: "linear-gradient(105deg, rgba(8,8,8,0.98) 0%, rgba(8,8,8,0.78) 45%, rgba(8,8,8,0.15) 100%)" }} />
+        <div className="absolute inset-0 z-[1]" style={{ background: "linear-gradient(to top, #080808 0%, rgba(8,8,8,0.6) 30%, transparent 60%)" }} />
+        <div className="absolute inset-0 z-[1]" style={{ background: "radial-gradient(ellipse at 15% 65%, rgba(212,168,83,0.05) 0%, transparent 50%)" }} />
+        <div className="absolute inset-0 z-[1] opacity-[0.03]" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")", backgroundSize: "180px" }} />
 
         <div className="relative z-[3] h-full flex items-end md:items-center px-5 md:px-14 lg:px-20 pb-12 md:pb-0">
           {/* Mobile hero */}
           <div className="w-full flex flex-col md:hidden gap-5 a1">
             <div className="flex items-end gap-4">
-              <div
-                className="rounded-xl overflow-hidden poster-glow flex-shrink-0"
-                style={{ width: 96, height: 144 }}
-              >
-                <img
-                  src={posterImage}
-                  alt={displayTitle}
-                  className="w-full h-full object-cover"
-                />
+              <div className="rounded-xl overflow-hidden poster-glow flex-shrink-0" style={{ width: 96, height: 144 }}>
+                <img src={posterImage} alt={displayTitle} className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0 pb-1">
                 <div className="flex flex-wrap gap-1.5 mb-2">
-                  <span className="kw-tag" style={{ fontSize: 9 }}>
-                    {resolvedMediaType === "tv" ? "Series" : "Film"}
-                  </span>
-                  {genres?.slice(0, 1).map((g) => (
-                    <span key={g.id} className="kw-tag" style={{ fontSize: 9 }}>
-                      {g.name}
-                    </span>
-                  ))}
+                  <span className="kw-tag" style={{ fontSize: 9 }}>{resolvedMediaType === "tv" ? "Series" : "Film"}</span>
+                  {genres?.slice(0, 1).map((g) => (<span key={g.id} className="kw-tag" style={{ fontSize: 9 }}>{g.name}</span>))}
                 </div>
-                <h1
-                  className="font-display font-bold text-white leading-tight"
-                  style={{
-                    fontSize: "clamp(1.7rem, 7vw, 2.4rem)",
-                    fontStyle: "italic",
-                    textShadow: "0 2px 20px rgba(0,0,0,0.8)",
-                  }}
-                >
+                <h1 className="font-display font-bold text-white leading-tight" style={{ fontSize: "clamp(1.7rem, 7vw, 2.4rem)", fontStyle: "italic", textShadow: "0 2px 20px rgba(0,0,0,0.8)" }}>
                   {displayTitle}
                 </h1>
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] text-white/40">
-                  <span className="font-semibold text-white/60">
-                    {badgeYear ||
-                      (release_date || first_air_date)?.split("-")[0]}
-                  </span>
+                  <span className="font-semibold text-white/60">{badgeYear || (release_date || first_air_date)?.split("-")[0]}</span>
                   <span className="rating-badge">{ageRating}</span>
-                  {runtime && (
-                    <span className="flex items-center gap-1">
-                      <Clock size={9} />
-                      {runtime}
-                    </span>
-                  )}
+                  {runtime && (<span className="flex items-center gap-1"><Clock size={9} />{runtime}</span>)}
                 </div>
               </div>
             </div>
@@ -2280,140 +2326,56 @@ const MovieDetails = () => {
               <div className="flex items-center gap-3">
                 <ScoreRing score={parseFloat(rating)} size={46} />
                 <div>
-                  <span className="text-sm font-bold text-white/80">
-                    {parseFloat(rating).toFixed(1)}
-                  </span>
+                  <span className="text-sm font-bold text-white/80">{parseFloat(rating).toFixed(1)}</span>
                   <span className="text-[10px] text-white/25 ml-1">/ 10</span>
-                  <p className="text-[9px] text-white/25 mt-0.5">
-                    {votes?.toLocaleString()} ratings
-                  </p>
+                  <p className="text-[9px] text-white/25 mt-0.5">{votes?.toLocaleString()} ratings</p>
                 </div>
               </div>
             )}
 
-            <p className="text-[13px] leading-relaxed text-white/50 line-clamp-3">
-              {plot}
-            </p>
+            <p className="text-[13px] leading-relaxed text-white/50 line-clamp-3">{plot}</p>
 
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleResumeClick}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider text-black play-btn"
-              >
+              <button onClick={handleResumeClick} className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider text-black play-btn">
                 <Play size={14} fill="black" />
-                {resumeData
-                  ? resolvedMediaType === "tv"
-                    ? `Resume S${resumeData.season}E${resumeData.episode}`
-                    : "Resume"
-                  : resolvedMediaType === "tv"
-                    ? "Play S1 E1"
-                    : "Stream Now"}
+                {resumeData ? resolvedMediaType === "tv" ? `Resume S${resumeData.season}E${resumeData.episode}` : "Resume" : resolvedMediaType === "tv" ? "Play S1 E1" : "Stream Now"}
               </button>
-              <button
-                onClick={handleWatchlistToggle}
-                disabled={isSavingList}
-                className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${isInList ? "watchlist-on" : "btn-glass"}`}
-              >
-                {isSavingList ? (
-                  <Loader2 size={15} className="animate-spin text-white/50" />
-                ) : isInList ? (
-                  <Check size={15} className="text-[#d4a853]" />
-                ) : (
-                  <Plus size={15} className="text-white/60" />
-                )}
+              <button onClick={handleWatchlistToggle} disabled={isSavingList} className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${isInList ? "watchlist-on" : "btn-glass"}`}>
+                {isSavingList ? <Loader2 size={15} className="animate-spin text-white/50" /> : isInList ? <Check size={15} className="text-[#d4a853]" /> : <Plus size={15} className="text-white/60" />}
               </button>
-              <button
-                onClick={() => {
-                  closePlayer();
-                  playTrailer();
-                }}
-                className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 btn-glass"
-              >
-                <Play
-                  size={13}
-                  fill="rgba(255,255,255,0.45)"
-                  className="text-white/45 ml-0.5"
-                />
+              <button onClick={() => { closePlayer(); playTrailer(); }} className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 btn-glass">
+                <Play size={13} fill="rgba(255,255,255,0.45)" className="text-white/45 ml-0.5" />
               </button>
             </div>
           </div>
 
           {/* Desktop hero */}
           <div className="hidden md:flex gap-12 lg:gap-16 items-end w-full max-w-5xl">
-            <div
-              className="flex-shrink-0 aL rounded-2xl overflow-hidden poster-glow"
-              style={{ width: 210 }}
-            >
-              <img
-                src={posterImage}
-                alt={displayTitle}
-                className="w-full aspect-[2/3] object-cover"
-              />
+            <div className="flex-shrink-0 aL rounded-2xl overflow-hidden poster-glow" style={{ width: 210 }}>
+              <img src={posterImage} alt={displayTitle} className="w-full aspect-[2/3] object-cover" />
             </div>
 
             <div className="flex-1 space-y-4 pb-8">
               <div className="flex flex-wrap gap-2 a1">
-                <span
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-semibold uppercase tracking-widest"
-                  style={{
-                    background: "rgba(212,168,83,0.1)",
-                    border: "1px solid rgba(212,168,83,0.25)",
-                    color: "#d4a853",
-                  }}
-                >
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-semibold uppercase tracking-widest" style={{ background: "rgba(212,168,83,0.1)", border: "1px solid rgba(212,168,83,0.25)", color: "#d4a853" }}>
                   <ShieldCheck size={9} /> Protected
                 </span>
-                <span className="kw-tag">
-                  {resolvedMediaType === "tv" ? "Series" : "Film"}
-                </span>
-                {genres?.slice(0, 3).map((g) => (
-                  <span key={g.id} className="kw-tag">
-                    {g.name}
-                  </span>
-                ))}
+                <span className="kw-tag">{resolvedMediaType === "tv" ? "Series" : "Film"}</span>
+                {genres?.slice(0, 3).map((g) => (<span key={g.id} className="kw-tag">{g.name}</span>))}
               </div>
 
-              <h1
-                className="font-display font-bold text-white leading-[1.03] a2"
-                style={{
-                  fontSize: "clamp(2.8rem, 4.8vw, 4.4rem)",
-                  fontStyle: "italic",
-                  textShadow: "0 4px 30px rgba(0,0,0,0.5)",
-                }}
-              >
+              <h1 className="font-display font-bold text-white leading-[1.03] a2" style={{ fontSize: "clamp(2.8rem, 4.8vw, 4.4rem)", fontStyle: "italic", textShadow: "0 4px 30px rgba(0,0,0,0.5)" }}>
                 {displayTitle}
               </h1>
 
-              <div
-                className="flex flex-wrap items-center gap-3 a2"
-                style={{ fontSize: 11 }}
-              >
-                <span className="font-semibold text-white/70">
-                  {badgeYear || (release_date || first_air_date)?.split("-")[0]}
-                </span>
+              <div className="flex flex-wrap items-center gap-3 a2" style={{ fontSize: 11 }}>
+                <span className="font-semibold text-white/70">{badgeYear || (release_date || first_air_date)?.split("-")[0]}</span>
                 <span className="w-px h-3 bg-white/15" />
                 <span className="rating-badge">{ageRating}</span>
-                {runtime && (
-                  <>
-                    <span className="w-px h-3 bg-white/15" />
-                    <span className="flex items-center gap-1.5 text-white/40">
-                      <Clock size={10} />
-                      {runtime}
-                    </span>
-                  </>
-                )}
+                {runtime && (<><span className="w-px h-3 bg-white/15" /><span className="flex items-center gap-1.5 text-white/40"><Clock size={10} />{runtime}</span></>)}
                 <span className="w-px h-3 bg-white/15" />
-                <span className="text-white/30 uppercase tracking-wider">
-                  {language}
-                </span>
-                {votes > 0 && (
-                  <>
-                    <span className="w-px h-3 bg-white/15" />
-                    <span className="text-white/30">
-                      {votes?.toLocaleString()} ratings
-                    </span>
-                  </>
-                )}
+                <span className="text-white/30 uppercase tracking-wider">{language}</span>
+                {votes > 0 && (<><span className="w-px h-3 bg-white/15" /><span className="text-white/30">{votes?.toLocaleString()} ratings</span></>)}
               </div>
 
               {parseFloat(rating) > 0 && (
@@ -2421,86 +2383,38 @@ const MovieDetails = () => {
                   <ScoreRing score={parseFloat(rating)} size={54} />
                   <div>
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-base font-bold text-white/90">
-                        {parseFloat(rating).toFixed(1)}
-                      </span>
+                      <span className="text-base font-bold text-white/90">{parseFloat(rating).toFixed(1)}</span>
                       <span className="text-[11px] text-white/30">/ 10</span>
                     </div>
-                    <p className="text-[9px] text-white/25 mt-0.5">
-                      Community Score
-                    </p>
+                    <p className="text-[9px] text-white/25 mt-0.5">Community Score</p>
                   </div>
                   <div className="flex gap-1">
                     {Array.from({ length: 5 }, (_, i) => (
-                      <Star
-                        key={i}
-                        size={12}
-                        className={
-                          i < Math.floor(parseFloat(rating) / 2)
-                            ? "text-amber-400 fill-amber-400"
-                            : "text-white/10"
-                        }
-                      />
+                      <Star key={i} size={12} className={i < Math.floor(parseFloat(rating) / 2) ? "text-amber-400 fill-amber-400" : "text-white/10"} />
                     ))}
                   </div>
                 </div>
               )}
 
               <div className="a4">
-                <p
-                  className={`text-[13px] leading-relaxed text-white/55 max-w-[520px] ${expandedPlot ? "" : "line-clamp-3"}`}
-                >
-                  {plot}
-                </p>
+                <p className={`text-[13px] leading-relaxed text-white/55 max-w-[520px] ${expandedPlot ? "" : "line-clamp-3"}`}>{plot}</p>
                 {plot?.length > 180 && (
-                  <button
-                    onClick={() => setExpandedPlot((p) => !p)}
-                    className="flex items-center gap-1 mt-1.5 text-[10px] font-semibold text-amber-400/60 hover:text-amber-400 transition-colors"
-                  >
-                    {expandedPlot ? "Show less" : "Read more"}{" "}
-                    <ChevronDown
-                      size={11}
-                      className={`transition-transform ${expandedPlot ? "rotate-180" : ""}`}
-                    />
+                  <button onClick={() => setExpandedPlot((p) => !p)} className="flex items-center gap-1 mt-1.5 text-[10px] font-semibold text-amber-400/60 hover:text-amber-400 transition-colors">
+                    {expandedPlot ? "Show less" : "Read more"} <ChevronDown size={11} className={`transition-transform ${expandedPlot ? "rotate-180" : ""}`} />
                   </button>
                 )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 a5">
-                <button
-                  onClick={handleResumeClick}
-                  className="flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider text-black play-btn"
-                >
+                <button onClick={handleResumeClick} className="flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider text-black play-btn">
                   <Play size={14} fill="black" />
-                  {resumeData
-                    ? resolvedMediaType === "tv"
-                      ? `Resume S${resumeData.season} · E${resumeData.episode}`
-                      : "Resume"
-                    : resolvedMediaType === "tv"
-                      ? "Play S1 · E1"
-                      : "Stream Now"}
+                  {resumeData ? resolvedMediaType === "tv" ? `Resume S${resumeData.season} · E${resumeData.episode}` : "Resume" : resolvedMediaType === "tv" ? "Play S1 · E1" : "Stream Now"}
                 </button>
-                <button
-                  onClick={handleWatchlistToggle}
-                  disabled={isSavingList}
-                  className={`flex items-center gap-2 px-5 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all ${isInList ? "watchlist-on" : "btn-glass text-white/50"}`}
-                >
-                  {isSavingList ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : isInList ? (
-                    <Check size={14} />
-                  ) : (
-                    <Plus size={14} />
-                  )}
+                <button onClick={handleWatchlistToggle} disabled={isSavingList} className={`flex items-center gap-2 px-5 py-3.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all ${isInList ? "watchlist-on" : "btn-glass text-white/50"}`}>
+                  {isSavingList ? <Loader2 size={14} className="animate-spin" /> : isInList ? <Check size={14} /> : <Plus size={14} />}
                   {isInList ? "Saved" : "My List"}
                 </button>
-                <button
-                  onClick={() => {
-                    closePlayer();
-                    playTrailer();
-                  }}
-                  className="flex items-center gap-2 px-5 py-3.5 rounded-xl text-[11px] font-semibold uppercase tracking-wider btn-glass text-white/40 hover:text-white/70"
-                >
+                <button onClick={() => { closePlayer(); playTrailer(); }} className="flex items-center gap-2 px-5 py-3.5 rounded-xl text-[11px] font-semibold uppercase tracking-wider btn-glass text-white/40 hover:text-white/70">
                   <Play size={12} fill="currentColor" /> Trailer
                 </button>
               </div>
@@ -2513,27 +2427,16 @@ const MovieDetails = () => {
       <div className="px-5 md:px-14 lg:px-20 pt-10 pb-24 space-y-10">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            {
-              Icon: Calendar,
-              label: "Released",
-              value: release_date || first_air_date || badgeYear,
-            },
+            { Icon: Calendar, label: "Released", value: release_date || first_air_date || badgeYear },
             { Icon: Globe, label: "Language", value: language },
-            {
-              Icon: User,
-              label: resolvedMediaType === "tv" ? "Created by" : "Director",
-              value: director,
-            },
+            { Icon: User, label: resolvedMediaType === "tv" ? "Created by" : "Director", value: director },
             { Icon: FileText, label: "Writer", value: writer },
           ].map(({ Icon, label, value }) => (
             <div key={label} className="stat-card p-4">
               <p className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-white/22 font-medium mb-2.5">
-                <Icon size={9} className="text-amber-400/60" />
-                {label}
+                <Icon size={9} className="text-amber-400/60" />{label}
               </p>
-              <p className="text-[11px] font-semibold text-white/65 truncate">
-                {value || "—"}
-              </p>
+              <p className="text-[11px] font-semibold text-white/65 truncate">{value || "—"}</p>
             </div>
           ))}
         </div>
@@ -2541,15 +2444,10 @@ const MovieDetails = () => {
         {movie.production_companies?.length > 0 && (
           <div className="space-y-3">
             <p className="text-[9px] uppercase tracking-widest text-white/22 font-medium flex items-center gap-1.5">
-              <Award size={9} className="text-amber-400/50" />
-              Production
+              <Award size={9} className="text-amber-400/50" />Production
             </p>
             <div className="flex flex-wrap gap-2">
-              {movie.production_companies.slice(0, 6).map((c) => (
-                <span key={c.id} className="kw-tag">
-                  {c.name}
-                </span>
-              ))}
+              {movie.production_companies.slice(0, 6).map((c) => (<span key={c.id} className="kw-tag">{c.name}</span>))}
             </div>
           </div>
         )}
@@ -2557,15 +2455,10 @@ const MovieDetails = () => {
         {keywords.length > 0 && (
           <div className="space-y-3">
             <p className="text-[9px] uppercase tracking-widest text-white/22 font-medium flex items-center gap-1.5">
-              <BookOpen size={9} className="text-amber-400/50" />
-              Keywords
+              <BookOpen size={9} className="text-amber-400/50" />Keywords
             </p>
             <div className="flex flex-wrap gap-2">
-              {keywords.map((k) => (
-                <span key={k.id} className="kw-tag">
-                  {k.name}
-                </span>
-              ))}
+              {keywords.map((k) => (<span key={k.id} className="kw-tag">{k.name}</span>))}
             </div>
           </div>
         )}
@@ -2576,13 +2469,8 @@ const MovieDetails = () => {
           <div className="space-y-6">
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-1 px-1 pb-0.5">
               {tabs.map(({ key, label, Icon }) => (
-                <button
-                  key={key}
-                  onClick={() => setActiveTab(key)}
-                  className={`tab-pill flex items-center gap-1.5 ${activeTab === key ? "tab-pill-active" : "tab-pill-inactive"}`}
-                >
-                  <Icon size={11} />
-                  {label}
+                <button key={key} onClick={() => setActiveTab(key)} className={`tab-pill flex items-center gap-1.5 ${activeTab === key ? "tab-pill-active" : "tab-pill-inactive"}`}>
+                  <Icon size={11} />{label}
                 </button>
               ))}
             </div>
@@ -2591,109 +2479,49 @@ const MovieDetails = () => {
             {activeTab === "episodes" && resolvedMediaType === "tv" && (
               <div className="space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <p className="text-[11px] text-white/22 uppercase tracking-widest font-medium">
-                    {episodes.length} Episodes
-                  </p>
-                  <select
-                    value={selectedSeason}
-                    onChange={(e) => {
-                      setSelectedSeason(Number(e.target.value));
-                      setSelectedEpisode(1);
-                    }}
-                    className="season-sel w-full sm:w-auto uppercase tracking-wider"
-                  >
-                    {movie.seasons
-                      ?.filter((s) => s.season_number > 0)
-                      .map((s) => (
-                        <option
-                          key={s.id}
-                          value={s.season_number}
-                          style={{ background: "#111" }}
-                        >
-                          Season {s.season_number} · {s.episode_count} Episodes
-                        </option>
-                      ))}
+                  <p className="text-[11px] text-white/22 uppercase tracking-widest font-medium">{episodes.length} Episodes</p>
+                  <select value={selectedSeason} onChange={(e) => { setSelectedSeason(Number(e.target.value)); setSelectedEpisode(1); }} className="season-sel w-full sm:w-auto uppercase tracking-wider">
+                    {movie.seasons?.filter((s) => s.season_number > 0).map((s) => (
+                      <option key={s.id} value={s.season_number} style={{ background: "#111" }}>
+                        Season {s.season_number} · {s.episode_count} Episodes
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
                   {episodes.map((ep) => {
                     const pk = `s${selectedSeason}e${ep.episode_number}`;
                     const prog = episodeProgress[pk];
-                    const pct =
-                      prog && ep.runtime
-                        ? Math.min(100, (prog / (ep.runtime * 60)) * 100)
-                        : 0;
-                    const isOn =
-                      selectedEpisode === ep.episode_number && activeStream;
+                    const pct = prog && ep.runtime ? Math.min(100, (prog / (ep.runtime * 60)) * 100) : 0;
+                    const isOn = selectedEpisode === ep.episode_number && activeStream;
                     return (
-                      <div
-                        key={`${selectedSeason}-${ep.episode_number}`}
-                        onClick={() => handleEpisodeSelect(ep.episode_number)}
-                        className={`ep-card group cursor-pointer rounded-2xl overflow-hidden ${isOn ? "ep-card-on" : ""}`}
-                      >
+                      <div key={`${selectedSeason}-${ep.episode_number}`} onClick={() => handleEpisodeSelect(ep.episode_number)} className={`ep-card group cursor-pointer rounded-2xl overflow-hidden ${isOn ? "ep-card-on" : ""}`}>
                         <div className="relative aspect-video overflow-hidden">
-                          <img
-                            src={ep.still_path ? ep.still_path : heroImage}
-                            alt={ep.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
-                          />
-                          <div
-                            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                            style={{ background: "rgba(0,0,0,0.42)" }}
-                          >
-                            <div
-                              className="w-11 h-11 rounded-full flex items-center justify-center"
-                              style={{
-                                background: "rgba(212,168,83,0.92)",
-                                boxShadow: "0 4px 20px rgba(212,168,83,0.45)",
-                              }}
-                            >
-                              <Play
-                                size={16}
-                                fill="black"
-                                className="text-black ml-0.5"
-                              />
+                          <img src={ep.still_path ? ep.still_path : heroImage} alt={ep.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" />
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200" style={{ background: "rgba(0,0,0,0.42)" }}>
+                            <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: "rgba(212,168,83,0.92)", boxShadow: "0 4px 20px rgba(212,168,83,0.45)" }}>
+                              <Play size={16} fill="black" className="text-black ml-0.5" />
                             </div>
                           </div>
-                          <div
-                            className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[9px] font-bold text-white/80 tracking-wider"
-                            style={{
-                              background: "rgba(0,0,0,0.65)",
-                              backdropFilter: "blur(8px)",
-                              border: "1px solid rgba(255,255,255,0.1)",
-                            }}
-                          >
+                          <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[9px] font-bold text-white/80 tracking-wider" style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}>
                             E{ep.episode_number}
                           </div>
                           {ep.air_date && (
-                            <div
-                              className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md text-[9px] text-white/40"
-                              style={{
-                                background: "rgba(0,0,0,0.55)",
-                                backdropFilter: "blur(6px)",
-                              }}
-                            >
+                            <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md text-[9px] text-white/40" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}>
                               {ep.air_date?.split("-")[0]}
                             </div>
                           )}
                           {pct > 0 && (
                             <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/10">
-                              <div
-                                className="ep-prog"
-                                style={{ width: `${pct}%` }}
-                              />
+                              <div className="ep-prog" style={{ width: `${pct}%` }} />
                             </div>
                           )}
                         </div>
                         <div className="p-4">
-                          <h4
-                            className={`text-xs font-bold truncate mb-1.5 transition-colors ${isOn ? "text-[#d4a853]" : "text-white group-hover:text-[#d4a853]"}`}
-                          >
+                          <h4 className={`text-xs font-bold truncate mb-1.5 transition-colors ${isOn ? "text-[#d4a853]" : "text-white group-hover:text-[#d4a853]"}`}>
                             {ep.episode_number}. {ep.name}
                           </h4>
-                          <p className="text-[10px] text-white/40 leading-relaxed line-clamp-2">
-                            {ep.overview || "No description available."}
-                          </p>
+                          <p className="text-[10px] text-white/40 leading-relaxed line-clamp-2">{ep.overview || "No description available."}</p>
                         </div>
                       </div>
                     );
@@ -2705,50 +2533,27 @@ const MovieDetails = () => {
             {/* Cast & Crew */}
             {activeTab === "cast" && cast.length > 0 && (
               <div className="relative group/cast">
-                <div
-                  ref={castScrollRef}
-                  className="flex gap-3 md:gap-4 overflow-x-auto thin-scroll pb-6 pt-2 px-1 -mx-1"
-                >
+                <div ref={castScrollRef} className="flex gap-3 md:gap-4 overflow-x-auto thin-scroll pb-6 pt-2 px-1 -mx-1">
                   {cast.map((member) => (
-                    <div
-                      key={member.id}
-                      onClick={() => setSelectedCastMember(member)}
-                      className="cast-item w-[110px] md:w-[130px] rounded-xl overflow-hidden flex-shrink-0"
-                    >
+                    <div key={member.id} onClick={() => setSelectedCastMember(member)} className="cast-item w-[110px] md:w-[130px] rounded-xl overflow-hidden flex-shrink-0">
                       <div className="aspect-[2/2.5] bg-[#111]">
                         {member.profile_path ? (
-                          <img
-                            src={`${IMG}/w185${member.profile_path}`}
-                            alt={member.name}
-                            className="w-full h-full object-cover object-top"
-                          />
+                          <img src={`${IMG}/w185${member.profile_path}`} alt={member.name} className="w-full h-full object-cover object-top" />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center text-white/20">
-                            <User size={28} />
-                          </div>
+                          <div className="w-full h-full flex items-center justify-center text-white/20"><User size={28} /></div>
                         )}
                       </div>
                       <div className="p-3">
-                        <p className="text-[10px] font-bold text-white truncate">
-                          {member.name}
-                        </p>
-                        <p className="text-[9px] text-white/40 truncate mt-0.5">
-                          {member.character}
-                        </p>
+                        <p className="text-[10px] font-bold text-white truncate">{member.name}</p>
+                        <p className="text-[9px] text-white/40 truncate mt-0.5">{member.character}</p>
                       </div>
                     </div>
                   ))}
                 </div>
-                <button
-                  onClick={() => scrollCast(-1)}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex"
-                >
+                <button onClick={() => scrollCast(-1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex">
                   <ChevronLeft size={16} />
                 </button>
-                <button
-                  onClick={() => scrollCast(1)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex"
-                >
+                <button onClick={() => scrollCast(1)} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex">
                   <ChevronRight size={16} />
                 </button>
               </div>
@@ -2758,26 +2563,12 @@ const MovieDetails = () => {
             {activeTab === "related" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                  {related.map((item) => (
-                    <RelatedCard
-                      key={item.id}
-                      item={item}
-                      onClick={handleRelatedClick}
-                    />
-                  ))}
+                  {related.map((item) => (<RelatedCard key={item.id} item={item} onClick={handleRelatedClick} />))}
                 </div>
                 {relatedPage < relatedTotal && (
                   <div className="flex justify-center pt-4">
-                    <button
-                      onClick={() => fetchRelated(relatedPage + 1)}
-                      disabled={relatedLoading}
-                      className="px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex items-center gap-2"
-                    >
-                      {relatedLoading ? (
-                        <Loader2 size={14} className="animate-spin text-amber-400" />
-                      ) : (
-                        <Plus size={14} />
-                      )}
+                    <button onClick={() => fetchRelated(relatedPage + 1)} disabled={relatedLoading} className="px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex items-center gap-2">
+                      {relatedLoading ? <Loader2 size={14} className="animate-spin text-amber-400" /> : <Plus size={14} />}
                       Load More
                     </button>
                   </div>
@@ -2788,14 +2579,16 @@ const MovieDetails = () => {
         )}
       </div>
 
-      {/* Player Overlay */}
+      {/* ── Player Overlay ───────────────────────────────────────────────── */}
       {activeStream && (
         <div
           ref={playerRef}
           className="fixed inset-0 z-[400] bg-black flex items-center justify-center player-container"
+          // Catch ALL clicks inside the player — nothing escapes to ad layers
+          onClick={(e) => e.stopPropagation()}
         >
           <button
-            onClick={closePlayer}
+            onClick={(e) => { e.stopPropagation(); closePlayer(); }}
             className="absolute top-5 left-5 z-[500] w-10 h-10 rounded-full flex items-center justify-center bg-black/50 hover:bg-black/80 border border-white/10 transition-all"
           >
             <ArrowLeft size={18} className="text-white" />
@@ -2814,11 +2607,14 @@ const MovieDetails = () => {
           )}
 
           {embedUrl ? (
+            // ── Sandboxed iframe — cannot open popups or redirect parent ──
             <iframe
               src={embedUrl}
-              className="w-full h-full border-none"
+              className="player-iframe w-full h-full border-none"
               allowFullScreen
-              allow="autoplay; fullscreen"
+              allow="autoplay; fullscreen; picture-in-picture"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock"
+              referrerPolicy="no-referrer"
               title="Stream"
             />
           ) : cleanUrl ? (
