@@ -46,8 +46,8 @@ import { supabase } from "../../src/services/supabaseClient";
 import languages from "../data/langs.json";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://candidates-plasma-happened-healing.trycloudflare.com/api/fetch-stream";
-const SUBS_URL    = "https://candidates-plasma-happened-healing.trycloudflare.com/api/subs";
+const BACKEND_URL = "https://matched-radio-implies-was.trycloudflare.com/api/fetch-stream";
+const SUBS_URL    = "https://matched-radio-implies-was.trycloudflare.com/api/subs";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -1017,6 +1017,7 @@ const MovieDetails = () => {
 
   const [activeStream, setActiveStream] = useState(null);
   const [cleanUrl, setCleanUrl] = useState(null);
+  const [embedUrl, setEmbedUrl] = useState(null);
   const [isCleaning, setIsCleaning] = useState(false);
   const [audioTracks, setAudioTracks] = useState([]);
   const [selectedAudio, setSelectedAudio] = useState("original");
@@ -1158,6 +1159,7 @@ const MovieDetails = () => {
     destroyVideo();
     setActiveStream(null);
     setCleanUrl(null);
+    setEmbedUrl(null);
     setActiveMenu(null);
     setShowNextEpBtn(false);
     setAutoNextCountdown(null);
@@ -1407,6 +1409,7 @@ const MovieDetails = () => {
 
       setIsCleaning(true);
       setCleanUrl(null);
+      setEmbedUrl(null);
       setActiveMenu(null);
       setSubtitleTracks([]);
       setSelectedSubtitle(-1);
@@ -1447,6 +1450,12 @@ const MovieDetails = () => {
           const data = await res.json();
           if (data.success && data.url) {
             if (ctrl.signal.aborted) return;
+            if (data.embed) {
+              setEmbedUrl(data.url);
+              setCleanUrl(null);
+              if (!ctrl.signal.aborted) setIsCleaning(false);
+              return;
+            }
             setCleanUrl(`${backendBase}${data.url}`);
             fetchSubtitles(mId, mType, s, e);
             if (!ctrl.signal.aborted) setIsCleaning(false);
@@ -2804,63 +2813,75 @@ const MovieDetails = () => {
             </div>
           )}
 
-          <video
-            ref={videoRef}
-            className="w-full h-full object-contain"
-            playsInline
-            crossOrigin="anonymous"
-          >
-            {subtitleTracks.map((t, i) => (
-              <track
-                key={i}
-                kind="subtitles"
-                src={t.src}
-                srcLang={t.language}
-                label={t.title || getLanguageName(t.language, languages)}
-                default={selectedSubtitle === i}
-              />
-            ))}
-          </video>
-
-          {!isCleaning && cleanUrl && (
-            <PlayerControls
-              videoRef={videoRef}
-              playerRef={playerRef}
-              isMuted={isMuted}
-              setIsMuted={setIsMuted}
-              subtitleTracks={subtitleTracks}
-              selectedSubtitle={selectedSubtitle}
-              selectSubtitle={selectSubtitle}
-              qualityLevels={qualityLevels}
-              selectedQuality={selectedQuality}
-              selectQuality={selectQuality}
-              audioTracks={audioTracks}
-              selectedAudio={selectedAudio}
-              toggleAudio={toggleAudio}
-              activeMenu={activeMenu}
-              setActiveMenu={setActiveMenu}
-              controlsRef={controlsRef}
-              displayTitle={displayTitle}
-              resolvedMediaType={resolvedMediaType}
-              selectedSeason={selectedSeason}
-              selectedEpisode={selectedEpisode}
-              episodes={episodes}
-              handleEpisodeSelect={handleEpisodeSelect}
-              activeStream={activeStream}
-              languages={languages}
-              getLanguageName={getLanguageName}
-              currentTime={currentTime}
-              duration={duration}
-              setCurrentTime={setCurrentTime}
-              isPlaying={isPlaying}
-              setIsPlaying={setIsPlaying}
-              showNextEpBtn={showNextEpBtn}
-              nextEpisode={nextEpisode}
-              autoNextCountdown={autoNextCountdown}
-              cancelAutoNext={cancelAutoNext}
-              subtitleStyle={subtitleStyle}
+          {embedUrl ? (
+            <iframe
+              src={embedUrl}
+              className="w-full h-full border-none"
+              allowFullScreen
+              allow="autoplay; fullscreen"
+              title="Stream"
             />
-          )}
+          ) : cleanUrl ? (
+            <div className="relative w-full h-full">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-contain"
+                playsInline
+                crossOrigin="anonymous"
+              >
+                {subtitleTracks.map((t, i) => (
+                  <track
+                    key={i}
+                    kind="subtitles"
+                    src={t.src}
+                    srcLang={t.language}
+                    label={t.title || getLanguageName(t.language, languages)}
+                    default={selectedSubtitle === i}
+                  />
+                ))}
+              </video>
+
+              {!isCleaning && (
+                <PlayerControls
+                  videoRef={videoRef}
+                  playerRef={playerRef}
+                  isMuted={isMuted}
+                  setIsMuted={setIsMuted}
+                  subtitleTracks={subtitleTracks}
+                  selectedSubtitle={selectedSubtitle}
+                  selectSubtitle={selectSubtitle}
+                  qualityLevels={qualityLevels}
+                  selectedQuality={selectedQuality}
+                  selectQuality={selectQuality}
+                  audioTracks={audioTracks}
+                  selectedAudio={selectedAudio}
+                  toggleAudio={toggleAudio}
+                  activeMenu={activeMenu}
+                  setActiveMenu={setActiveMenu}
+                  controlsRef={controlsRef}
+                  displayTitle={displayTitle}
+                  resolvedMediaType={resolvedMediaType}
+                  selectedSeason={selectedSeason}
+                  selectedEpisode={selectedEpisode}
+                  episodes={episodes}
+                  handleEpisodeSelect={handleEpisodeSelect}
+                  activeStream={activeStream}
+                  languages={languages}
+                  getLanguageName={getLanguageName}
+                  currentTime={currentTime}
+                  duration={duration}
+                  setCurrentTime={setCurrentTime}
+                  isPlaying={isPlaying}
+                  setIsPlaying={setIsPlaying}
+                  showNextEpBtn={showNextEpBtn}
+                  nextEpisode={nextEpisode}
+                  autoNextCountdown={autoNextCountdown}
+                  cancelAutoNext={cancelAutoNext}
+                  subtitleStyle={subtitleStyle}
+                />
+              )}
+            </div>
+          ) : null}
         </div>
       )}
 
