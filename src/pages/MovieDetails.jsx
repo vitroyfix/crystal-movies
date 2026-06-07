@@ -1267,7 +1267,6 @@ const MovieDetails = () => {
     }
   };
 
-
   const getSavedProgress = async () => {
     if (!currentUser) return 0;
     const key =
@@ -2669,3 +2668,212 @@ const MovieDetails = () => {
                             </div>
                           )}
                           {pct > 0 && (
+                            <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/10">
+                              <div
+                                className="ep-prog"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-4">
+                          <h4
+                            className={`text-xs font-bold truncate mb-1.5 transition-colors ${isOn ? "text-[#d4a853]" : "text-white group-hover:text-[#d4a853]"}`}
+                          >
+                            {ep.episode_number}. {ep.name}
+                          </h4>
+                          <p className="text-[10px] text-white/40 leading-relaxed line-clamp-2">
+                            {ep.overview || "No description available."}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Cast & Crew */}
+            {activeTab === "cast" && cast.length > 0 && (
+              <div className="relative group/cast">
+                <div
+                  ref={castScrollRef}
+                  className="flex gap-3 md:gap-4 overflow-x-auto thin-scroll pb-6 pt-2 px-1 -mx-1"
+                >
+                  {cast.map((member) => (
+                    <div
+                      key={member.id}
+                      onClick={() => setSelectedCastMember(member)}
+                      className="cast-item w-[110px] md:w-[130px] rounded-xl overflow-hidden flex-shrink-0"
+                    >
+                      <div className="aspect-[2/2.5] bg-[#111]">
+                        {member.profile_path ? (
+                          <img
+                            src={`${IMG}/w185${member.profile_path}`}
+                            alt={member.name}
+                            className="w-full h-full object-cover object-top"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white/20">
+                            <User size={28} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-3">
+                        <p className="text-[10px] font-bold text-white truncate">
+                          {member.name}
+                        </p>
+                        <p className="text-[9px] text-white/40 truncate mt-0.5">
+                          {member.character}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => scrollCast(-1)}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  onClick={() => scrollCast(1)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center opacity-0 group-hover/cast:opacity-100 transition-opacity disabled:opacity-0 hidden md:flex"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
+
+            {/* Related */}
+            {activeTab === "related" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                  {related.map((item) => (
+                    <RelatedCard
+                      key={item.id}
+                      item={item}
+                      onClick={handleRelatedClick}
+                    />
+                  ))}
+                </div>
+                {relatedPage < relatedTotal && (
+                  <div className="flex justify-center pt-4">
+                    <button
+                      onClick={() => fetchRelated(relatedPage + 1)}
+                      disabled={relatedLoading}
+                      className="px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex items-center gap-2"
+                    >
+                      {relatedLoading ? (
+                        <Loader2 size={14} className="animate-spin text-amber-400" />
+                      ) : (
+                        <Plus size={14} />
+                      )}
+                      Load More
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Player Overlay */}
+      {activeStream && (
+        <div
+          ref={playerRef}
+          className="fixed inset-0 z-[400] bg-black flex items-center justify-center player-container"
+        >
+          <button
+            onClick={closePlayer}
+            className="absolute top-5 left-5 z-[500] w-10 h-10 rounded-full flex items-center justify-center bg-black/50 hover:bg-black/80 border border-white/10 transition-all"
+          >
+            <ArrowLeft size={18} className="text-white" />
+          </button>
+
+          {isCleaning && (
+            <div className="absolute inset-0 z-[150] flex flex-col items-center justify-center bg-black">
+              <div className="relative w-16 h-16 mb-4">
+                <div className="absolute inset-0 rounded-full border border-amber-400/20 animate-ping" />
+                <div className="w-16 h-16 rounded-full border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent border-[2px] animate-spin" />
+              </div>
+              <p className="text-[11px] uppercase tracking-[0.3em] text-white/50 font-medium animate-pulse">
+                Finding best source...
+              </p>
+            </div>
+          )}
+
+          <video
+            ref={videoRef}
+            className="w-full h-full object-contain"
+            playsInline
+            crossOrigin="anonymous"
+          >
+            {subtitleTracks.map((t, i) => (
+              <track
+                key={i}
+                kind="subtitles"
+                src={t.src}
+                srcLang={t.language}
+                label={t.title || getLanguageName(t.language, languages)}
+                default={selectedSubtitle === i}
+              />
+            ))}
+          </video>
+
+          {!isCleaning && cleanUrl && (
+            <PlayerControls
+              videoRef={videoRef}
+              playerRef={playerRef}
+              isMuted={isMuted}
+              setIsMuted={setIsMuted}
+              subtitleTracks={subtitleTracks}
+              selectedSubtitle={selectedSubtitle}
+              selectSubtitle={selectSubtitle}
+              qualityLevels={qualityLevels}
+              selectedQuality={selectedQuality}
+              selectQuality={selectQuality}
+              audioTracks={audioTracks}
+              selectedAudio={selectedAudio}
+              toggleAudio={toggleAudio}
+              activeMenu={activeMenu}
+              setActiveMenu={setActiveMenu}
+              controlsRef={controlsRef}
+              displayTitle={displayTitle}
+              resolvedMediaType={resolvedMediaType}
+              selectedSeason={selectedSeason}
+              selectedEpisode={selectedEpisode}
+              episodes={episodes}
+              handleEpisodeSelect={handleEpisodeSelect}
+              activeStream={activeStream}
+              languages={languages}
+              getLanguageName={getLanguageName}
+              currentTime={currentTime}
+              duration={duration}
+              setCurrentTime={setCurrentTime}
+              isPlaying={isPlaying}
+              setIsPlaying={setIsPlaying}
+              showNextEpBtn={showNextEpBtn}
+              nextEpisode={nextEpisode}
+              autoNextCountdown={autoNextCountdown}
+              cancelAutoNext={cancelAutoNext}
+              subtitleStyle={subtitleStyle}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Cast Modal */}
+      {selectedCastMember && (
+        <CastModal
+          member={selectedCastMember}
+          onClose={() => setSelectedCastMember(null)}
+          navigate={navigate}
+        />
+      )}
+    </div>
+  );
+};
+
+export default MovieDetails;
