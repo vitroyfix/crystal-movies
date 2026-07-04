@@ -42,10 +42,6 @@ const VIDAPI_BASE = "https://vaplayer.ru";
 const AUTO_NEXT_COUNTDOWN_S = 15;
 
 // ─── Popup / redirect protection ──────────────────────────────────────────────
-// Ad-supported embeds sometimes try to open new tabs or bounce the parent page
-// via window.open, anchor clicks, or postMessage. The iframe itself is sandboxed
-// (no allow-top-navigation / allow-popups), which is the primary defense — this
-// is a secondary layer that also stops any same-origin scripts from misbehaving.
 const AD_DOMAINS = [
   "whitebit.com",
   "go.oclasrv.com",
@@ -141,8 +137,12 @@ function buildVidApiEmbedUrl({
   if (poster) params.set("poster", poster);
   if (resumeAt && resumeAt > 0) params.set("resumeAt", String(Math.floor(resumeAt)));
   if (subUrl) {
+    // Use the prefetched track if we have it — instant, no player-side lookup delay
     params.set("sub_url", subUrl);
     if (subLang) params.set("sub_lang", subLang);
+  } else {
+    // Fall back to VidAPI's own server-side OpenSubtitles auto-search
+    params.set("ds_lang", "en");
   }
   params.set("primaryColor", "d4a853");
   params.set("autoplay", "1");
@@ -463,6 +463,7 @@ const MovieDetails = () => {
   const [activeStream, setActiveStream] = useState(false);
   const [embedUrl, setEmbedUrl] = useState(null);
   const [iframeLoading, setIframeLoading] = useState(false);
+  const [playerVisible, setPlayerVisible] = useState(false); // drives fade-in
   const [showNextEpBtn, setShowNextEpBtn] = useState(false);
   const [autoNextCountdown, setAutoNextCountdown] = useState(null);
 
@@ -471,6 +472,9 @@ const MovieDetails = () => {
   const castScrollRef = useRef(null);
   const playerRef = useRef(null);
   const popupGuardCleanupRef = useRef(null);
+
+  // Cache of prefetched subtitle tracks, keyed by "movie" or "s{season}e{episode}"
+  const subCacheRef = useRef(new Map());
 
   const nextEpisode =
     resolvedMediaType === "tv"
@@ -519,8 +523,12 @@ const MovieDetails = () => {
 
   const closePlayer = useCallback(() => {
     stopTrailer();
-    setActiveStream(false);
-    setEmbedUrl(null);
+    setPlayerVisible(false);
+    // Let the fade-out finish before unmounting the iframe
+    setTimeout(() => {
+      setActiveStream(false);
+      setEmbedUrl(null);
+    }, 180);
     setShowNextEpBtn(false);
     setAutoNextCountdown(null);
     if (autoNextRef.current) clearInterval(autoNextRef.current);
@@ -619,69 +627,85 @@ const MovieDetails = () => {
     }
   };
 
-  const getSavedProgress = useCallback(
+  // ── Background subtitle prefetch ────────────────────────────────────────────
+  // Runs silently in the background as soon as we know what the user is likely
+  // to click next, so by the time they click Play the track is already cached
+  // and openEmbed can attach it with zero added latency.
+  const prefetchSubs = useCallback(
     async (season, episode) => {
-      if (!currentUser) return 0;
-      const key =
-        resolvedMediaType === "tv" ? `tv_${id}_s${season}_e${episode}` : `movie_${id}`;
-      try {
-        const { data } = await supabase
-          .from("user_progress")
-          .select("time")
-          .eq("user_id", currentUser.uid)
-          .eq("media_id", key)
-          .maybeSingle();
-        return data ? data.time : 0;
-      } catch {
-        return 0;
-      }
-    },
-    [currentUser, resolvedMediaType, id],
-  );
+      const cacheKey = resolvedMediaType === "tv" ? `s${season}e${episode}` : "movie";
+      if (subCacheRef.current.has(cacheKey)) return;
+      subCacheRef.current.set(cacheKey, null); // mark in-flight so we don't double-fetch
 
-  // ── Subtitles (optional — via your own OpenSubtitles proxy) ────────────────
-  // Returns a publicly fetchable .vtt/.srt URL through your /api/proxy route,
-  // since VidAPI fetches sub_url server-side (no CORS, but must be reachable).
-  const fetchSubUrlForEmbed = useCallback(
-    async (mId, mType, s, e) => {
       try {
         const res = await fetch(SUBS_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-API-Key": API_KEY_HEADER },
-          body: JSON.stringify({ imdbId: mId, type: mType, season: s, episode: e }),
+          body: JSON.stringify({
+            imdbId: id,
+            type: resolvedMediaType,
+            season: resolvedMediaType === "tv" ? season : undefined,
+            episode: resolvedMediaType === "tv" ? episode : undefined,
+          }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) return;
         const result = await res.json();
         const en = (result.tracks || []).find((t) => t.language === "en") || result.tracks?.[0];
-        if (!en) return null;
-        return { url: `${backendBase}${en.uri}`, lang: en.language };
+        if (en) {
+          subCacheRef.current.set(cacheKey, { url: `${backendBase}${en.uri}`, lang: en.language });
+        }
       } catch {
-        return null;
+        // silent — falls back to VidAPI's own ds_lang auto-search at play time
       }
     },
-    [],
+    [id, resolvedMediaType],
   );
 
-  // ── Build + open the embed for a given episode/movie ────────────────────────
+  // Prefetch subs for the default episode / movie as soon as we have the data
+  useEffect(() => {
+    if (!movie) return;
+    if (resolvedMediaType === "movie") {
+      prefetchSubs();
+    } else if (selectedSeason) {
+      prefetchSubs(selectedSeason, selectedEpisode);
+    }
+  }, [movie, resolvedMediaType, selectedSeason, selectedEpisode, prefetchSubs]);
+
+  // Prefetch subs for every episode in the currently loaded season, staggered
+  // so it doesn't hammer your /api/subs rate limiter.
+  useEffect(() => {
+    if (resolvedMediaType !== "tv" || !episodes.length) return;
+    let cancelled = false;
+    (async () => {
+      for (const ep of episodes) {
+        if (cancelled) return;
+        await prefetchSubs(selectedSeason, ep.episode_number);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [episodes, selectedSeason, resolvedMediaType, prefetchSubs]);
+
+  // ── Build + open the embed for a given episode/movie (synchronous — instant) ─
   const openEmbed = useCallback(
-    async ({ season, episode }) => {
-      setIframeLoading(true);
+    ({ season, episode }) => {
       setShowNextEpBtn(false);
       setAutoNextCountdown(null);
       autoNextCancelled.current = false;
       if (autoNextRef.current) clearInterval(autoNextRef.current);
 
-      const resumeAt = await getSavedProgress(season, episode);
+      const resumeAt =
+        resolvedMediaType === "tv"
+          ? episodeProgress[`s${season}e${episode}`] || 0
+          : resumeData?.time || 0;
+
       const poster = movie?.backdrop_path ? `${IMG}/original${movie.backdrop_path}` : undefined;
       const title = movie?.title || movie?.name;
 
-      let subUrl = null;
-      let subLang = null;
-      const sub = await fetchSubUrlForEmbed(id, resolvedMediaType, season, episode);
-      if (sub) {
-        subUrl = sub.url;
-        subLang = sub.lang;
-      }
+      const cacheKey = resolvedMediaType === "tv" ? `s${season}e${episode}` : "movie";
+      const cachedSub = subCacheRef.current.get(cacheKey);
 
       const url = buildVidApiEmbedUrl({
         tmdbId: id,
@@ -691,15 +715,17 @@ const MovieDetails = () => {
         resumeAt,
         title,
         poster,
-        subUrl,
-        subLang,
+        subUrl: cachedSub?.url,
+        subLang: cachedSub?.lang,
       });
 
+      setIframeLoading(true);
       setEmbedUrl(url);
       setActiveStream(true);
-      setIframeLoading(false);
+      // Fade in on next paint — avoids the overlay popping in instantly/jarringly
+      requestAnimationFrame(() => requestAnimationFrame(() => setPlayerVisible(true)));
     },
-    [id, resolvedMediaType, movie, getSavedProgress, fetchSubUrlForEmbed],
+    [id, resolvedMediaType, movie, episodeProgress, resumeData],
   );
 
   const handleEpisodeSelect = useCallback(
@@ -838,6 +864,7 @@ const MovieDetails = () => {
     load();
     fetchCastData();
     fetchRelated();
+    subCacheRef.current.clear();
   }, [id, resolvedMediaType]);
 
   useEffect(() => {
@@ -980,6 +1007,9 @@ const MovieDetails = () => {
         .next-ep-btn{background:#d4a853;box-shadow:0 8px 24px rgba(212,168,83,0.4);transition:all .2s;}
         .next-ep-btn:hover{transform:translateY(-1px);box-shadow:0 12px 32px rgba(212,168,83,0.55);}
         .rating-badge{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.13);color:rgba(255,255,255,0.55);}
+        .player-overlay{opacity:0;transition:opacity .28s ease;}
+        .player-overlay.visible{opacity:1;}
+        .player-spinner-fade{animation:fadeUp .3s ease both;}
       `}</style>
 
       <button
@@ -1459,7 +1489,7 @@ const MovieDetails = () => {
       {activeStream && embedUrl && (
         <div
           ref={playerRef}
-          className="fixed inset-0 z-[400] bg-black flex items-center justify-center"
+          className={`fixed inset-0 z-[400] bg-black flex items-center justify-center player-overlay ${playerVisible ? "visible" : ""}`}
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -1473,7 +1503,7 @@ const MovieDetails = () => {
           </button>
 
           {iframeLoading && (
-            <div className="absolute inset-0 z-[150] flex flex-col items-center justify-center bg-black">
+            <div className="absolute inset-0 z-[150] flex flex-col items-center justify-center bg-black player-spinner-fade">
               <div className="relative w-16 h-16 mb-4">
                 <div className="absolute inset-0 rounded-full border border-amber-400/20 animate-ping" />
                 <div className="w-16 h-16 rounded-full border-t-amber-400 border-r-transparent border-b-transparent border-l-transparent border-[2px] animate-spin" />
@@ -1492,7 +1522,9 @@ const MovieDetails = () => {
             the player to function (video playback, postMessage).
           */}
           <iframe
+            key={embedUrl}
             src={embedUrl}
+            onLoad={() => setIframeLoading(false)}
             className="w-full h-full border-none"
             allowFullScreen
             allow="autoplay; fullscreen; picture-in-picture"
