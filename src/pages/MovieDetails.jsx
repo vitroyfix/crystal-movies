@@ -1514,13 +1514,6 @@ const MovieDetails = () => {
             </div>
           )}
 
-          {/*
-            SANDBOX NOTE: deliberately omitting `allow-top-navigation` and
-            `allow-popups` — this is what actually stops the embed from
-            hijacking the tab or spawning popups, regardless of what scripts
-            run inside it. allow-same-origin + allow-scripts are required for
-            the player to function (video playback, postMessage).
-          */}
           <iframe
             key={embedUrl}
             src={embedUrl}
@@ -1528,7 +1521,6 @@ const MovieDetails = () => {
             className="w-full h-full border-none"
             allowFullScreen
             allow="autoplay; fullscreen; picture-in-picture"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock"
             referrerPolicy="no-referrer"
             title="Stream"
           />
