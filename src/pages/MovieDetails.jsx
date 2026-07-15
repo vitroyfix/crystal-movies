@@ -65,9 +65,24 @@ const AD_DOMAINS = [
   "bitmedia.io",
   "coinzilla.io",
   "cointraffic.io",
+  "betmentor.com",
 ];
 
-const isAdUrl = (url = "") => AD_DOMAINS.some((d) => url.toLowerCase().includes(d));
+const isAdUrl = (url = "") => {
+  const lowerUrl = url.toLowerCase();
+  
+  // 1. Check if it directly matches an ad domain
+  const matchesDirect = AD_DOMAINS.some((d) => lowerUrl.includes(d));
+  if (matchesDirect) return true;
+
+  // 2. Check if it's a Google Search redirecting to an ad keyword
+  if (lowerUrl.includes("google.com/search")) {
+    const suspiciousKeywords = ["betmentor", "whitebit", "predictions"];
+    return suspiciousKeywords.some((keyword) => lowerUrl.includes(keyword));
+  }
+
+  return false;
+};
 
 const installPopupGuard = () => {
   const origOpen = window.open;
@@ -486,6 +501,23 @@ const MovieDetails = () => {
     popupGuardCleanupRef.current = installPopupGuard();
     return () => popupGuardCleanupRef.current?.();
   }, []);
+
+  // ── Block unexpected redirects while streaming ─────────────────────────────
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (activeStream) {
+        // This forces the browser to show a "Leave site? Changes you made may not be saved" prompt
+        // effectively pausing the automated redirect in its tracks.
+        e.preventDefault();
+        e.returnValue = ""; 
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [activeStream]);
 
   const saveProgress = useCallback(
     async (ct) => {
