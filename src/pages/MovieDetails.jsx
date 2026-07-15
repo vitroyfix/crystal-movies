@@ -66,6 +66,7 @@ const AD_DOMAINS = [
   "coinzilla.io",
   "cointraffic.io",
   "betmentor.com",
+  "refpa32010.com",
 ];
 
 const isAdUrl = (url = "") => {
