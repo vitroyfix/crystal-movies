@@ -68,6 +68,7 @@ const AD_DOMAINS = [
   "betmentor.com",
   "refpa32010.com",
   "hummerleaked.cyou",
+  "us.effic.pro",
 ];
 
 const isAdUrl = (url = "") => {
