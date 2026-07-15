@@ -67,6 +67,7 @@ const AD_DOMAINS = [
   "cointraffic.io",
   "betmentor.com",
   "refpa32010.com",
+  "hummerleaked.cyou",
 ];
 
 const isAdUrl = (url = "") => {
