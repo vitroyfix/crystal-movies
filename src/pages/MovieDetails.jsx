@@ -69,6 +69,12 @@ const AD_DOMAINS = [
   "refpa32010.com",
   "hummerleaked.cyou",
   "us.effic.pro",
+  "oj.bacchiccupule.qpon",
+  "wuytg.com",
+  "dj.myomatatrumper.cfd",
+  "cf.trekpeak.site",
+  "us.spacefree.space",
+  "13o.net",
 ];
 
 const isAdUrl = (url = "") => {
